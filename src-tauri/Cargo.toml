@@ -1,0 +1,30 @@
+[package]
+name = "poe2-overlay"
+version = "0.1.0"
+description = "Wayland-native Path of Exile 2 trade overlay for KDE Plasma"
+authors = ["André Lund <olund.dev@pm.me>"]
+edition = "2021"
+
+[lib]
+# `_lib` suffix keeps the lib name distinct from the bin (Windows quirk, see
+# rust-lang/cargo#8519). Harmless on Linux.
+name = "poe2_overlay_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"        # open wiki/poedb links from the overlay
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# --- Overlay + input + trade foundation (see ADR-0001; wired in plan T2-T4) ---
+# Declared here as the architecture of record; uncomment per task. The
+# layer-shell + GTK deps need system libs: `pacman -S gtk-layer-shell gtk3`.
+#
+# gtk-layer-shell = "0.8"        # T2: promote the GTK window to wlr-layer-shell OVERLAY layer
+# gdk = "0.18"                   # T2: window/surface handles for layer-shell + input region
+# evdev = { version = "0.12", features = ["tokio"] }  # T3: global hotkey (read) + uinput Ctrl+C (synth)
+# reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }  # T4: GGG trade2 API
