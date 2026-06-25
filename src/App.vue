@@ -1,10 +1,13 @@
 <script setup lang="ts">
-// T2 probe: a top-right card on the full-screen layer-shell OVERLAY surface, to
-// verify the surface composites over fullscreen Proton PoE2. The surface is modal
-// while shown (covers the screen); dismiss with the ✕ or Esc (both invoke the
-// hide_overlay command). Real pricing UI + hotkey-gated show land in T5/T3.
-import { onMounted, onUnmounted } from "vue";
+// T3 proof: the overlay is hidden until the Insert hotkey fires a price check,
+// which synthesizes Ctrl+C into PoE2, reads the clipboard, and emits the item
+// text here. T4 parses + prices it; T5 builds the real listings UI.
+import { onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+const itemText = ref("");
+let unlisten: UnlistenFn | undefined;
 
 function hide() {
   invoke("hide_overlay");
@@ -14,17 +17,25 @@ function onKey(e: KeyboardEvent) {
   if (e.key === "Escape") hide();
 }
 
-onMounted(() => window.addEventListener("keydown", onKey));
-onUnmounted(() => window.removeEventListener("keydown", onKey));
+onMounted(async () => {
+  window.addEventListener("keydown", onKey);
+  unlisten = await listen<string>("price-check-item", (e) => {
+    itemText.value = e.payload;
+  });
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", onKey);
+  unlisten?.();
+});
 </script>
 
 <template>
   <div class="overlay-root">
     <div class="card">
       <button class="close" title="Hide (Esc)" @click="hide">✕</button>
-      <div class="badge">PoE2 Overlay — layer-shell OVERLAY surface</div>
-      <p class="hint">Composites over fullscreen PoE2 → T2 works.</p>
-      <p class="hint">Click ✕ or press Esc to dismiss.</p>
+      <div class="badge">PoE2 Overlay — copied item (T3)</div>
+      <pre class="item">{{ itemText || "Hover an item in PoE2 and press Ctrl+Alt+D…" }}</pre>
     </div>
   </div>
 </template>
@@ -41,7 +52,6 @@ body,
 </style>
 
 <style scoped>
-/* Full-screen transparent canvas; the card is the only visible/interactive bit. */
 .overlay-root {
   position: fixed;
   inset: 0;
@@ -50,15 +60,23 @@ body,
 
 .card {
   position: fixed;
-  top: 24px;
-  right: 24px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 400px;
+  /* Fixed (not max-) height: a content-sized card shrinks for shorter items, and
+     WebKitGTK leaves the previously-painted transparent region uncleared until a later
+     repaint — so old cards linger stacked behind the new one. A constant-size card
+     overpaints the same region every time. */
+  height: 380px;
+  overflow: auto;
   padding: 16px 20px;
   border-radius: 10px;
-  background: rgba(10, 12, 20, 0.85);
+  background: rgba(10, 12, 20, 0.88);
   border: 1px solid rgba(120, 180, 255, 0.55);
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
   color: #cfe3ff;
-  font: 600 15px/1.4 Inter, system-ui, sans-serif;
+  font: 600 14px/1.4 Inter, system-ui, sans-serif;
   pointer-events: auto;
 }
 
@@ -84,12 +102,14 @@ body,
 
 .badge {
   padding-right: 30px;
+  margin-bottom: 8px;
 }
 
-.hint {
-  margin: 6px 0 0;
-  font-weight: 400;
-  font-size: 12px;
-  color: #93a7c4;
+.item {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 400 12px/1.45 "JetBrains Mono", ui-monospace, monospace;
+  color: #aebfd6;
 }
 </style>

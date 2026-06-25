@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"        # open wiki/poedb links from the overlay
+tauri-plugin-single-instance = "2"  # T3: KDE Ctrl+Alt+D shortcut forwards `--price-check` here (ADR-0002)
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -31,5 +32,9 @@ gtk = "0.18"                     # gtk::ApplicationWindow handle from Tauri's wi
 # v0_6: KeyboardMode::OnDemand binding (libgtk-layer-shell >= 0.6; system is 0.10.1).
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 
-# evdev = { version = "0.12", features = ["tokio"] }  # T3: global hotkey (read) + uinput Ctrl+C (synth)
+# T3 (ADR-0002): the KDE Ctrl+Alt+D shortcut triggers the copy; we synthesize it
+# via uinput and read the X11 clipboard. No /dev/input reads — only /dev/uinput.
+evdev = "0.12"                   # uinput virtual device (Ctrl+C synth); /dev/uinput ACL, no `input` group
+x11-clipboard = "0.9"            # read the X11 CLIPBOARD selection (XWayland/Proton writes there)
+
 # reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }  # T4: GGG trade2 API

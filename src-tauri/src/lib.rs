@@ -23,20 +23,42 @@ fn hide_overlay(window: WebviewWindow) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be the FIRST plugin. KDE's Ctrl+Alt+D shortcut launches
+        // `poe2-overlay --price-check`; this forwards that to the running
+        // instance and exits the second one (ADR-0002).
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if argv.iter().any(|a| a == "--price-check") {
+                let app = app.clone();
+                // Off the event-loop thread — price_check sleeps.
+                std::thread::spawn(move || hotkey::price_check(&app));
+            } else if argv.iter().any(|a| a == "--hide") {
+                // Compositor-level dismiss (ADR-0003): KDE forwards `--hide` here.
+                // KWin owns the shortcut, so it always reaches us even if the
+                // OVERLAY surface were grabbing all pointer/keyboard input — the
+                // guaranteed escape from any input-trap, plus the normal close key.
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![hide_overlay])
         .setup(|app| {
             let window = app
                 .get_webview_window("main")
                 .expect("main window missing from tauri.conf.json");
-            // Promote to a layer-shell OVERLAY surface while still hidden, then
-            // reveal it. T3 will gate showing behind the global hotkey; for now it
-            // shows on launch so the surface can be verified over the game.
+            // Promote to a layer-shell OVERLAY surface while still hidden. The
+            // window stays hidden until a price check shows it; ✕/Esc hides it.
             overlay::init_layer_shell(&window)?;
-            window.show()?;
+            // Build the uinput synth device once and keep it warm in state.
+            match hotkey::build_synth() {
+                Ok(dev) => {
+                    app.manage(hotkey::Synth(std::sync::Mutex::new(dev)));
+                }
+                Err(e) => eprintln!("[hotkey] cannot open /dev/uinput ({e}); item copy disabled"),
+            }
             Ok(())
         })
-        // TODO(T3): start the global hotkey listener via `hotkey::start_listener`.
         .run(tauri::generate_context!())
         .expect("error while running PoE2 Overlay");
 }

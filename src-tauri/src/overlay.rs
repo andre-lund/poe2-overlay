@@ -9,26 +9,45 @@
 use tauri::WebviewWindow;
 
 #[cfg(target_os = "linux")]
-use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
+use gtk::prelude::{GtkWindowExt, WidgetExt};
+#[cfg(target_os = "linux")]
+use gtk_layer_shell::{KeyboardMode, Layer, LayerShell};
 
-/// Promote `window` to a wlr-layer-shell OVERLAY surface, anchored to the
-/// top-right corner and sized to the window (NOT stretched to the whole output).
+/// Fixed size of the panel surface, in logical px. Large enough for the price
+/// card; small enough that its bounded input region only covers a central patch.
+#[cfg(target_os = "linux")]
+const OVERLAY_W: i32 = 440;
+#[cfg(target_os = "linux")]
+const OVERLAY_H: i32 = 420;
+
+/// Promote `window` to a wlr-layer-shell OVERLAY surface, **centered** on the
+/// output at a fixed size — NOT stretched to the whole output.
 ///
 /// Must run while the window is still hidden (`visible: false` in
 /// tauri.conf.json): gtk-layer-shell requires promotion *before* the GTK window
 /// is mapped. Reference: PathofTrading / ExileWatch (technique only — ADR-0001).
 ///
-/// **Why full-output, not corner-sized:** anchoring to all four edges forces the
-/// surface to the whole output, which renders reliably. A corner surface (two
-/// anchors) takes its size from the GTK window's child — the WebKitGTK webview,
-/// whose minimum size request is ~0 — so the surface collapses and nothing draws.
-/// The overlay is therefore modal while shown (it covers the screen) and dismissed
-/// with its own close control + Esc (see `hide_overlay`), the same full-screen,
-/// focusable, show-on-demand model the proven PathofTrading reference uses. T3 hides
-/// it by default and shows it on the hotkey; per-region click-through (so the game
-/// stays live behind a visible panel) is a T5 problem — tao's
-/// `set_ignore_cursor_events` sets the input shape on the toplevel GDK window, which
-/// the WebKitGTK child surface ignores, so it does not achieve click-through here.
+/// **Why a sized sub-output surface, not full-output (ADR-0003):** a four-edge
+/// (full-output) surface covers the entire screen, and a `wl_surface`'s input
+/// region defaults to the whole surface — CSS `pointer-events: none` does *not*
+/// shrink it — so the surface swallows every click on the desktop and traps all
+/// input with no escape but its own on-screen controls. A surface anchored to no
+/// opposite-edge pair is not stretched; it stays a finite rectangle (centered when
+/// unanchored), so clicks outside it reach the game. Forcing the size needs
+/// gtk-layer-shell's two-call "Forcing Window Size" idiom: tao pre-sizes the GTK
+/// window to the `tauri.conf.json` dimensions (1140×600) via `resize`, and on a
+/// resizable toplevel `set_size_request` only raises the *minimum* — so it alone
+/// would map ~1140 wide. The following `resize(1, 1)` is clamped back up to the
+/// `set_size_request` minimum and clears tao's sticky size, committing the true
+/// `OVERLAY_W × OVERLAY_H` surface. Worst case (size handling ever failing) the
+/// surface is ~1×1 — invisible, trapping nothing — never full-screen. Per-region
+/// click-through *within* the panel (so the game stays live behind it) is the T5 seam.
+///
+/// **Keyboard mode `None`:** the surface never takes keyboard focus — a game overlay
+/// must not steal the keyboard from PoE2 (you keep moving/casting while it is up).
+/// Dismissal stays available via the ✕ button (a pointer click, focus-independent)
+/// and the `Ctrl+Alt+X` hide shortcut (KWin, ADR-0003); in-webview Esc is inert with
+/// `None`. (`Exclusive` was also rejected — it drops the game out of fullscreen.)
 #[cfg(target_os = "linux")]
 pub fn init_layer_shell(window: &WebviewWindow) -> tauri::Result<()> {
     let gtk_window = window.gtk_window()?;
@@ -37,19 +56,22 @@ pub fn init_layer_shell(window: &WebviewWindow) -> tauri::Result<()> {
     gtk_window.set_layer(Layer::Overlay);
     gtk_window.set_namespace("poe2-overlay");
 
-    // Anchor all four edges → the surface fills the output (a full-screen canvas the
-    // card is positioned within via CSS). Required for the surface to get a non-zero
-    // size; see the doc comment above.
-    for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
-        gtk_window.set_anchor(edge, true);
-    }
+    // Anchor no edges → gtk-layer-shell centers the surface on the output. With no
+    // opposite-edge pair anchored it is never stretched, so it stays a finite
+    // centered rectangle.
+    // Force a concrete size (gtk-layer-shell "Forcing Window Size" idiom). tao has
+    // already pinned the window to the tauri.conf.json size (1140×600); set_size_request
+    // only raises the minimum, so the resize(1,1) — clamped up to that minimum — is what
+    // clears tao's sticky size and commits the OVERLAY_W×OVERLAY_H surface. Both calls
+    // are required; see the doc comment.
+    gtk_window.set_size_request(OVERLAY_W, OVERLAY_H);
+    gtk_window.resize(1, 1);
+
     // Draw over panels; reserve no screen space.
     gtk_window.set_exclusive_zone(-1);
-    // Keyboard reaches the surface once the user clicks it (OnDemand) — enough for
-    // Esc-to-dismiss after a click; the ✕ button works on click regardless. The game
-    // keeps keyboard focus until then. (Exclusive was rejected — it drops the game
-    // out of fullscreen.)
-    gtk_window.set_keyboard_mode(KeyboardMode::OnDemand);
+    // Never take keyboard focus — a game overlay must not steal the keyboard from PoE2;
+    // dismissal is the ✕ click + Ctrl+Alt+X. See the doc comment.
+    gtk_window.set_keyboard_mode(KeyboardMode::None);
 
     Ok(())
 }
