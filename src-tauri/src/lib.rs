@@ -11,13 +11,26 @@ mod hotkey;
 mod overlay;
 mod trade;
 
-use tauri::{Manager, WebviewWindow};
+use tauri::{Manager, State, WebviewWindow};
 
-/// Hide the overlay surface. The probe panel's close control (and Esc) invoke this;
-/// T3 replaces show-on-launch with an evdev hotkey that toggles visibility.
+/// Hide the overlay surface. The card's ✕ control (and Esc) invoke this; the price
+/// check shows it again on the next Ctrl+Alt+D.
 #[tauri::command]
 fn hide_overlay(window: WebviewWindow) {
     let _ = window.hide();
+}
+
+/// Re-price the last-checked item with the overlay's edited filters + selected league
+/// (T5 toggles + league selector). Always `Ok` — pricing failures arrive as a
+/// `PriceResult` with an error/rate-limited status, not a command error.
+#[tauri::command]
+async fn requery(
+    pricing: State<'_, trade::Pricing>,
+    league: String,
+    parsed_stats: Vec<trade::ParsedStat>,
+    base_properties: Vec<trade::BaseProp>,
+) -> Result<trade::PriceResult, ()> {
+    Ok(pricing.requery(league, parsed_stats, base_properties).await)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -42,7 +55,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![hide_overlay])
+        .invoke_handler(tauri::generate_handler![hide_overlay, requery])
         .setup(|app| {
             let window = app
                 .get_webview_window("main")

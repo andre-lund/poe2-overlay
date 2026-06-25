@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::async_runtime::Mutex as AsyncMutex;
 
 pub use parse::parse_item;
@@ -92,8 +92,9 @@ pub struct Listing {
 }
 
 /// A parsed stat line resolved to a trade2 stat id, with the value used to seed the
-/// search filter. Sent to the overlay so T5 can render per-stat toggles + requery.
-#[derive(Debug, Clone, Serialize)]
+/// search filter. Sent to the overlay so T5 can render per-stat toggles + requery
+/// (round-trips back into the `requery` command, hence `Deserialize`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ParsedStat {
     pub id: String,
@@ -108,7 +109,7 @@ pub struct ParsedStat {
 
 /// A base property (class / rarity / base type / name / ilvl / …) that can be
 /// toggled into the trade2 query. `active` mirrors the reference's defaults.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BaseProp {
     pub id: String,
@@ -172,6 +173,25 @@ pub fn display_name(item: &ParsedItem) -> String {
         format!("{} ({})", item.name, item.base_type)
     } else {
         item.name.clone()
+    }
+}
+
+/// A successful bulk (poe.ninja) result — one listing, no toggleable filters.
+fn bulk_result(
+    item: &ParsedItem,
+    league: String,
+    leagues: Vec<String>,
+    listing: Listing,
+) -> PriceResult {
+    PriceResult {
+        status: PriceStatus::Success,
+        item: display_name(item),
+        message: None,
+        listings: vec![listing],
+        parsed_stats: Vec::new(),
+        base_properties: Vec::new(),
+        league,
+        leagues,
     }
 }
 
@@ -324,6 +344,25 @@ struct Caches {
     leagues: Option<(Instant, Vec<String>)>,
     rates: HashMap<String, f64>,
     rates_at: Option<Instant>,
+    /// League the cached `rates` were fetched for — exchange rates are league-specific,
+    /// so switching league (T5 selector) must refetch even within the TTL.
+    rates_league: Option<String>,
+}
+
+/// League-agnostic fallback exchange rates (exalt-equivalents) — used at startup and
+/// when a league-switch refetch fails (so we never serve another league's ratios).
+fn seeded_rates() -> HashMap<String, f64> {
+    HashMap::from([
+        ("whetstone".into(), 2.21),
+        ("exalted".into(), 1.0),
+        ("exalt".into(), 1.0),
+        ("divine".into(), 193.0),
+        ("vaal".into(), 4.45),
+        ("chaos".into(), 7.70),
+        ("alch".into(), 0.32),
+        ("regal".into(), 0.38),
+        ("mirror".into(), 1_640_154.0),
+    ])
 }
 
 impl Default for Caches {
@@ -333,19 +372,10 @@ impl Default for Caches {
             items: None,
             leagues: None,
             // Seed with the reference's static fallback so bulk pricing degrades
-            // gracefully when poe.ninja is unreachable. Values are exalt-equivalents.
-            rates: HashMap::from([
-                ("whetstone".into(), 2.21),
-                ("exalted".into(), 1.0),
-                ("exalt".into(), 1.0),
-                ("divine".into(), 193.0),
-                ("vaal".into(), 4.45),
-                ("chaos".into(), 7.70),
-                ("alch".into(), 0.32),
-                ("regal".into(), 0.38),
-                ("mirror".into(), 1_640_154.0),
-            ]),
+            // gracefully when poe.ninja is unreachable.
+            rates: seeded_rates(),
             rates_at: None,
+            rates_league: None,
         }
     }
 }
@@ -378,6 +408,9 @@ pub struct Pricing {
     /// User-selected league override (T5 selector sets it); `None` = use the current
     /// challenge league resolved from the fetched list.
     league: Mutex<Option<String>>,
+    /// The last item priced, so the T5 requery can re-price it with edited filters /
+    /// a new league without the frontend round-tripping the whole item.
+    last_item: Mutex<Option<ParsedItem>>,
 }
 
 impl Pricing {
@@ -393,7 +426,20 @@ impl Pricing {
             cache: AsyncMutex::new(Caches::default()),
             rate: Mutex::new(RateLimit::default()),
             league: Mutex::new(None),
+            last_item: Mutex::new(None),
         }
+    }
+
+    /// Override the active league (T5 league selector). `None` reverts to auto
+    /// (current challenge league). Persists to the next hotkey check too.
+    pub fn set_league(&self, league: Option<String>) {
+        *self.league.lock().unwrap_or_else(|e| e.into_inner()) = league;
+    }
+
+    /// Current IP-rate-limit lockout in seconds, or `None` if clear. Poison-recovering
+    /// so a stray panic can never brick pricing (ADR-0004 never-panics guarantee).
+    fn check_lockout(&self) -> Option<u64> {
+        self.rate.lock().unwrap_or_else(|e| e.into_inner()).wait_secs()
     }
 
     /// Price a parsed item. Bulk currency/stackables resolve via poe.ninja (no GGG
@@ -401,6 +447,9 @@ impl Pricing {
     /// IP-rate-limit lockout. Never panics — failures become an `Empty`/`Error`/
     /// `RateLimited` result the overlay renders as text.
     pub async fn price(&self, item: &ParsedItem) -> PriceResult {
+        // Remember the item so T5's requery can re-price it with edited filters.
+        *self.last_item.lock().unwrap_or_else(|e| e.into_inner()) = Some(item.clone());
+
         let snapshot = self.ensure_caches().await;
         let league = snapshot.league.clone();
 
@@ -410,26 +459,14 @@ impl Pricing {
             if let Some(listing) =
                 ninja::price_bulk(&self.client, &league, item, &snapshot.rates).await
             {
-                return PriceResult {
-                    status: PriceStatus::Success,
-                    item: display_name(item),
-                    message: None,
-                    listings: vec![listing],
-                    parsed_stats: Vec::new(),
-                    base_properties: Vec::new(),
-                    league,
-                    leagues: snapshot.leagues,
-                };
+                return bulk_result(item, league, snapshot.leagues, listing);
             }
             // poe.ninja has no price for it — fall through to the trade2 auction path.
         }
 
         // Gear hits the GGG trade2 search/fetch — respect the IP lockout so we never
-        // trip a ban. Read the value out so the std guard drops before any await
-        // (clippy::await_holding_lock). Recover from poisoning so one stray panic can
-        // never permanently brick pricing (the ADR-0004 never-panics guarantee).
-        let lockout = self.rate.lock().unwrap_or_else(|e| e.into_inner()).wait_secs();
-        if let Some(wait) = lockout {
+        // trip a ban.
+        if let Some(wait) = self.check_lockout() {
             return PriceResult::message(
                 &display_name(item),
                 &league,
@@ -440,6 +477,71 @@ impl Pricing {
         }
 
         gear::price_gear(&self.client, &league, item, &snapshot, &self.rate).await
+    }
+
+    /// Re-price the last-checked item with user-edited filters and/or a new league (the
+    /// T5 toggles + league selector). Sets the league override (so a later hotkey check
+    /// uses it too), then re-runs: bulk via poe.ninja for the new league, gear via the
+    /// trade2 query built from the *edited* stats/base. Honors the IP lockout.
+    pub async fn requery(
+        &self,
+        league: String,
+        parsed_stats: Vec<ParsedStat>,
+        base_properties: Vec<BaseProp>,
+    ) -> PriceResult {
+        self.set_league(Some(league));
+        let snapshot = self.ensure_caches().await;
+        let lg = snapshot.league.clone();
+
+        let Some(item) = self
+            .last_item
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        else {
+            return PriceResult::message(
+                "No item",
+                &lg,
+                PriceStatus::Error,
+                "Nothing to requery — price-check an item first",
+                snapshot.leagues,
+            );
+        };
+
+        if item.is_bulk && !item.name.to_lowercase().contains("waystone") {
+            if let Some(listing) =
+                ninja::price_bulk(&self.client, &lg, &item, &snapshot.rates).await
+            {
+                return bulk_result(&item, lg, snapshot.leagues, listing);
+            }
+        }
+
+        if let Some(wait) = self.check_lockout() {
+            // Thread the edited filters back (NOT PriceResult::message, which empties
+            // them) so the overlay keeps the user's toggles/min-max to re-requery after
+            // the wait — matching the reference's lockout path (backend.py).
+            return PriceResult {
+                status: PriceStatus::RateLimited,
+                item: display_name(&item),
+                message: Some(format!("Rate limit approaching — wait {wait}s")),
+                listings: Vec::new(),
+                parsed_stats,
+                base_properties,
+                league: lg,
+                leagues: snapshot.leagues,
+            };
+        }
+
+        gear::run_gear_query(
+            &self.client,
+            &lg,
+            display_name(&item),
+            parsed_stats,
+            base_properties,
+            &snapshot,
+            &self.rate,
+        )
+        .await
     }
 
     /// Ensure the trade2 reference data + exchange rates are loaded and fresh, then
@@ -479,12 +581,23 @@ impl Pricing {
             .unwrap_or_else(default_leagues);
         let league = self.resolve_league(&leagues);
 
-        if c.rates_at.is_none_or(|at| at.elapsed() >= RATES_TTL) {
+        // Refetch exchange rates when stale OR when the league changed (rates are
+        // league-specific). On success, replace wholesale — merging would leave the
+        // previous league's values for currencies absent from the new overview.
+        let rates_stale = c.rates_at.is_none_or(|at| at.elapsed() >= RATES_TTL);
+        let league_changed = c.rates_league.as_deref() != Some(league.as_str());
+        if rates_stale || league_changed {
             if let Some(rates) = ninja::fetch_exchange_rates(&self.client, &league).await {
-                for (k, v) in rates {
-                    c.rates.insert(k, v);
-                }
+                c.rates = rates;
                 c.rates_at = Some(Instant::now());
+                c.rates_league = Some(league.clone());
+            } else if league_changed {
+                // Refetch failed for a *different* league — never serve the prior
+                // league's ratios as this one. Drop to neutral seeds and leave rates_at
+                // unset so the next check retries.
+                c.rates = seeded_rates();
+                c.rates_at = None;
+                c.rates_league = Some(league.clone());
             }
         }
 
@@ -691,6 +804,39 @@ mod net_tests {
             .iter()
             .any(|s| s.id == "pseudo.pseudo_total_elemental_resistance"));
         assert!(r.parsed_stats.iter().any(|s| s.id == "pseudo.pseudo_total_life"));
+    }
+
+    #[test]
+    #[ignore = "hits the live GGG trade2 search+fetch API (uses rate-limit budget)"]
+    fn smoke_requery_with_edited_filters() {
+        let text = "Item Class: Body Armours\n\
+            Rarity: Rare\n\
+            Doom Shell\n\
+            Vaal Regalia\n\
+            --------\n\
+            Item Level: 82\n\
+            --------\n\
+            +89 to maximum Life\n\
+            +45% to Fire Resistance\n\
+            +30% to Cold Resistance";
+        let item = parse_item(text).unwrap();
+        let p = Pricing::new();
+        let first = tauri::async_runtime::block_on(p.price(&item));
+        assert!(matches!(first.status, PriceStatus::Success | PriceStatus::Empty));
+
+        // Requery with every stat filter toggled off (base-category only) on the
+        // resolved league — exercises run_gear_query from edited filters + last_item.
+        let mut stats = first.parsed_stats.clone();
+        for s in &mut stats {
+            s.active = false;
+        }
+        let r = tauri::async_runtime::block_on(p.requery(
+            first.league.clone(),
+            stats,
+            first.base_properties.clone(),
+        ));
+        eprintln!("requery → status={:?} listings={}", r.status, r.listings.len());
+        assert!(matches!(r.status, PriceStatus::Success | PriceStatus::Empty));
     }
 }
 

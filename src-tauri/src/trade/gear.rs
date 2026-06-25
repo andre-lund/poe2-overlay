@@ -64,8 +64,9 @@ fn category_for(class: &str) -> Option<&'static str> {
     })
 }
 
-/// Price gear/waystones via the trade2 auction. Always returns a renderable result;
-/// network/quota failures become an `Empty`/`Error`/`RateLimited` status.
+/// Price gear/waystones via the trade2 auction. Builds the stat + base-property
+/// filters from the parsed item, then runs the query. Always returns a renderable
+/// result; network/quota failures become an `Empty`/`Error`/`RateLimited` status.
 pub async fn price_gear(
     client: &reqwest::Client,
     league: &str,
@@ -89,8 +90,32 @@ pub async fn price_gear(
     let mapper = StatMapper::new(&snapshot.stats);
     let parsed_stats = build_parsed_stats(&mapper, item, is_equip);
     let base_properties = build_base_properties(item, &base_type);
-    let name = display_name(item);
 
+    run_gear_query(
+        client,
+        league,
+        display_name(item),
+        parsed_stats,
+        base_properties,
+        snapshot,
+        rate,
+    )
+    .await
+}
+
+/// Run a trade2 search+fetch from already-built stat + base-property filters — the
+/// shared core of `price_gear` and the T5 requery command (which supplies the user's
+/// edited filters). Records the `X-Rate-Limit` headers on both calls.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_gear_query(
+    client: &reqwest::Client,
+    league: &str,
+    name: String,
+    parsed_stats: Vec<ParsedStat>,
+    base_properties: Vec<BaseProp>,
+    snapshot: &CacheSnapshot,
+    rate: &Mutex<RateLimit>,
+) -> PriceResult {
     let query = build_query(&parsed_stats, &base_properties);
 
     // --- search ---

@@ -13,12 +13,13 @@ use gtk::prelude::{GtkWindowExt, WidgetExt};
 #[cfg(target_os = "linux")]
 use gtk_layer_shell::{KeyboardMode, Layer, LayerShell};
 
-/// Fixed size of the panel surface, in logical px. Large enough for the price
-/// card; small enough that its bounded input region only covers a central patch.
+/// Fixed size of the panel surface, in logical px. Large enough for the T5 price
+/// card (league selector + filter toggles + listings, scrolling internally); small
+/// enough that its bounded input region only covers a central patch.
 #[cfg(target_os = "linux")]
-const OVERLAY_W: i32 = 440;
+const OVERLAY_W: i32 = 470;
 #[cfg(target_os = "linux")]
-const OVERLAY_H: i32 = 420;
+const OVERLAY_H: i32 = 640;
 
 /// Promote `window` to a wlr-layer-shell OVERLAY surface, **centered** on the
 /// output at a fixed size — NOT stretched to the whole output.
