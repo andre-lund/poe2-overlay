@@ -7,12 +7,14 @@
 //! prices it against the GGG trade2 API + poe.ninja (`trade`). The pieces are
 //! stubbed here and wired per the active plan (T2-T4).
 
+mod cheatsheet;
+mod clipboard;
 mod danger;
 mod hotkey;
 mod overlay;
 mod trade;
 
-use tauri::{Manager, State, WebviewWindow};
+use tauri::{Emitter, Manager, State, WebviewWindow};
 
 /// Hide the overlay surface. The card's ✕ control (and Esc) invoke this; the price
 /// check shows it again on the next Ctrl+Alt+D.
@@ -34,6 +36,19 @@ async fn requery(
     Ok(pricing.requery(league, parsed_stats, base_properties).await)
 }
 
+/// The regex cheat-sheet content for the overlay panel (T8, ADR-0006).
+#[tauri::command]
+fn get_cheatsheet() -> cheatsheet::Cheatsheet {
+    cheatsheet::cheatsheet()
+}
+
+/// Write a cheat-sheet pattern to the X11 clipboard so the user can paste it into the
+/// game's Ctrl-F box. `Err` if the X11 clipboard isn't available (regex copy disabled).
+#[tauri::command]
+fn copy_to_clipboard(clip: State<'_, clipboard::Clip>, text: String) -> Result<(), String> {
+    clip.copy(&text)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -53,10 +68,25 @@ pub fn run() {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
                 }
+            } else if argv.iter().any(|a| a == "--regex") {
+                // Regex cheat-sheet (T8, ADR-0006): not item-driven — opened deliberately
+                // at a stash/vendor via its own KDE shortcut (Ctrl+Alt+F). Switch the
+                // overlay to the cheat-sheet panel and show it.
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.emit("show-regex", ());
+                    if !w.is_visible().unwrap_or(false) {
+                        let _ = w.show();
+                    }
+                }
             }
         }))
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![hide_overlay, requery])
+        .invoke_handler(tauri::generate_handler![
+            hide_overlay,
+            requery,
+            get_cheatsheet,
+            copy_to_clipboard
+        ])
         .setup(|app| {
             let window = app
                 .get_webview_window("main")
@@ -73,6 +103,13 @@ pub fn run() {
             }
             // Warm pricing client + caches kept in state across checks (T4, ADR-0004).
             app.manage(trade::Pricing::new());
+            // Persistent X11 clipboard owner for the regex cheat-sheet write (T8, ADR-0006).
+            match clipboard::Clip::build() {
+                Ok(clip) => {
+                    app.manage(clip);
+                }
+                Err(e) => eprintln!("[clipboard] cannot open X11 clipboard ({e}); regex copy disabled"),
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -51,12 +51,27 @@ interface DangerReport {
   level: DangerLevel;
   flags: DangerFlag[];
 }
+interface Pattern {
+  label: string;
+  regex: string;
+  note: string;
+}
+interface Category {
+  name: string;
+  patterns: Pattern[];
+}
+interface Cheatsheet {
+  categories: Category[];
+  charLimit: number;
+}
 
 const itemName = ref("");
 const loading = ref(false); // initial price check in flight
 const busy = ref(false); // requery in flight
 const result = ref<PriceResult | null>(null);
 const danger = ref<DangerReport | null>(null); // set for waystones (T7), instead of a price
+const cheatsheet = ref<Cheatsheet | null>(null); // set in regex mode (T8), not item-driven
+const copiedRegex = ref(""); // the pattern just copied, for the "Copied" flash
 const stats = ref<ParsedStat[]>([]);
 const baseProps = ref<BaseProp[]>([]);
 const leagues = ref<string[]>([]);
@@ -70,6 +85,7 @@ const hasFilters = computed(() => stats.value.length > 0 || baseProps.value.leng
 
 function applyResult(r: PriceResult) {
   danger.value = null; // a price result replaces any prior waystone danger panel
+  cheatsheet.value = null;
   result.value = r;
   itemName.value = r.item;
   // Echoed filters carry the toggle state forward, so editing persists across requeries.
@@ -99,6 +115,18 @@ async function requery() {
   }
 }
 
+async function copyPattern(p: Pattern) {
+  try {
+    await invoke("copy_to_clipboard", { text: p.regex });
+    copiedRegex.value = p.regex;
+    setTimeout(() => {
+      if (copiedRegex.value === p.regex) copiedRegex.value = "";
+    }, 1500);
+  } catch (e) {
+    console.error("clipboard write failed", e);
+  }
+}
+
 function hide() {
   invoke("hide_overlay");
 }
@@ -115,6 +143,7 @@ onMounted(async () => {
       itemName.value = e.payload;
       result.value = null;
       danger.value = null;
+      cheatsheet.value = null;
       stats.value = [];
       baseProps.value = [];
       loading.value = true;
@@ -130,10 +159,30 @@ onMounted(async () => {
       danger.value = e.payload;
       itemName.value = e.payload.item;
       result.value = null;
+      cheatsheet.value = null;
       loading.value = false;
       busy.value = false; // no price result follows a danger check — reset the requery flag here
       stats.value = [];
       baseProps.value = [];
+    }),
+  );
+  unlisten.push(
+    await listen("show-regex", async () => {
+      reqGen.value++; // opening the cheat-sheet abandons any in-flight requery
+      busy.value = false;
+      // Fetch first, then swap panels atomically — clearing the price/danger state
+      // before this await would fall the template through to the stale price card for
+      // the IPC round-trip; holding the prior panel until the sheet is ready avoids any
+      // flash. The price-check/danger listeners clear `cheatsheet` when they fire.
+      const sheet = await invoke<Cheatsheet>("get_cheatsheet");
+      loading.value = false;
+      result.value = null;
+      danger.value = null;
+      itemName.value = "";
+      stats.value = [];
+      baseProps.value = [];
+      copiedRegex.value = "";
+      cheatsheet.value = sheet;
     }),
   );
 });
@@ -149,7 +198,32 @@ onUnmounted(() => {
     <div class="card">
       <button class="close" title="Hide (Esc / Ctrl+Alt+X)" @click="hide">✕</button>
 
-      <div v-if="!itemName" class="hint">
+      <template v-if="cheatsheet">
+        <header class="head">
+          <div class="name">Regex cheat-sheet</div>
+        </header>
+        <div v-for="cat in cheatsheet.categories" :key="cat.name" class="rcat">
+          <div class="rcat-name">{{ cat.name }}</div>
+          <button
+            v-for="p in cat.patterns"
+            :key="p.regex"
+            class="rrow"
+            :title="`Copy: ${p.regex}`"
+            @click="copyPattern(p)"
+          >
+            <span class="rlabel">{{ p.label }}</span>
+            <code class="rregex">{{ p.regex }}</code>
+            <span v-if="p.note" class="rnote">{{ p.note }}</span>
+            <span class="rcopied" :class="{ show: copiedRegex === p.regex }">✓ Copied</span>
+          </button>
+        </div>
+        <div class="rfooter">
+          Click a pattern → paste (Ctrl+V) into the in-game Ctrl-F box · max
+          {{ cheatsheet.charLimit }} chars
+        </div>
+      </template>
+
+      <div v-else-if="!itemName" class="hint">
         Hover an item in PoE2 and press Ctrl+Alt+D…
       </div>
 
@@ -494,6 +568,86 @@ body,
 .fmod {
   margin-top: 2px;
   font: 400 11px/1.4 "JetBrains Mono", ui-monospace, monospace;
+  color: #7e8aa0;
+}
+
+/* --- regex cheat-sheet (T8) --- */
+.rcat {
+  margin-bottom: 8px;
+}
+
+.rcat-name {
+  margin: 6px 0 3px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #7e8aa0;
+}
+
+.rrow {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(120, 180, 255, 0.06);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  margin-bottom: 3px;
+}
+
+.rrow:hover {
+  background: rgba(120, 180, 255, 0.16);
+}
+
+.rlabel {
+  font-weight: 600;
+  color: #cfe3ff;
+}
+
+.rregex {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 12px/1.4 "JetBrains Mono", ui-monospace, monospace;
+  color: #e8c98a;
+}
+
+.rnote {
+  flex-basis: 100%;
+  font-size: 11px;
+  font-weight: 400;
+  color: #7e8aa0;
+}
+
+.rcopied {
+  position: absolute;
+  top: 5px;
+  right: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8fe3a0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.rcopied.show {
+  opacity: 1;
+}
+
+.rfooter {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 400;
   color: #7e8aa0;
 }
 </style>
