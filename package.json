@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "GDK_BACKEND=wayland WEBKIT_DISABLE_DMABUF_RENDERER=1 tauri dev",
-    "tauri:build": "GDK_BACKEND=wayland WEBKIT_DISABLE_DMABUF_RENDERER=1 tauri build"
+    "tauri:build": "GDK_BACKEND=wayland WEBKIT_DISABLE_DMABUF_RENDERER=1 APPIMAGE_EXTRACT_AND_RUN=1 tauri build"
   },
   "dependencies": {
     "vue": "^3.5.13",

@@ -6,15 +6,19 @@ the hovered item, and prices it against the GGG trade2 API + poe.ninja — the s
 job the Windows-only Overwolf "PoE Overlay II" does, but built for native KWin
 Wayland where the X11-based overlays (Exiled-Exchange-2, awakened-poe-trade) fail.
 
-> Status: **scaffold**. The Tauri shell is in place; the overlay surface, input,
-> and pricing are stubbed and tracked in `docs/plans/active/`.
+> Status: **price-check MVP working** (T1–T6). Layer-shell overlay over fullscreen
+> Proton, KDE-global-shortcut input path, pricing core (poe.ninja bulk + GGG trade2
+> gear), overlay UI (listings, filter toggles, league selector, requery), and
+> packaging/install. Tracked in `docs/plans/active/`; map/atlas + regex helpers (T7–T8)
+> are post-MVP.
 
 ## Why this exists / how it works
 
-See `docs/adr/0001-*.md` for the decision and `docs/research/RESEARCH.md` for the
-full landscape study (why X11 overlays break on Wayland, the candidate matrix, the
-layer-shell mechanism). `docs/research/INSTALL.md` documents the validated working
-reference, **PathofTrading**.
+See `docs/adr/` for the decisions (ADR-0001 the clean build + layer-shell mechanism,
+0002 the KDE-shortcut input path, 0003 overlay dismissal safety, 0004 the pricing core
++ event contract) and `docs/research/RESEARCH.md` for the landscape study (why X11
+overlays break on Wayland, the candidate matrix). `CONTEXT.md` is the glossary;
+`docs/research/INSTALL.md` covers the validated reference, **PathofTrading**.
 
 Target stack: CachyOS / KDE Plasma 6 / KWin Wayland, PoE2 via Steam Proton.
 
@@ -22,9 +26,21 @@ Target stack: CachyOS / KDE Plasma 6 / KWin Wayland, PoE2 via Steam Proton.
 
 ```bash
 sudo pacman -S --needed webkit2gtk-4.1 gtk3 gtk-layer-shell base-devel
-# Rust + Node already required; global-hotkey/uinput needs /dev/uinput access
+# Rust + Node also required; the in-game copy needs /dev/uinput access
 # (session ACL or the `input` group).
 ```
+
+## Install (KDE Plasma 6 Wayland)
+
+```bash
+npm install            # first time
+npm run tauri:build    # -> AppImage/deb/rpm under src-tauri/target/release/bundle/
+./packaging/install.sh # binary + KDE shortcuts (Ctrl+Alt+D / Ctrl+Alt+X) + autostart
+```
+
+Then log out and back in (so KWin registers the shortcuts and the overlay autostarts
+warm). Full runbook — uinput access, key customization, troubleshooting, uninstall —
+in **`docs/INSTALL.md`**.
 
 ## Develop
 

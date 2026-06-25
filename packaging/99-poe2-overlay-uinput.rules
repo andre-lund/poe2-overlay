@@ -1,0 +1,11 @@
+# poe2-overlay — /dev/uinput access for the in-game Ctrl+C synth (ADR-0002).
+#
+# Only needed if your session does NOT already grant the logged-in user rw on
+# /dev/uinput (CachyOS/systemd usually do, via a uaccess rule — check with
+# `getfacl /dev/uinput`). Install with:
+#   sudo install -m644 99-poe2-overlay-uinput.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# TAG+="uaccess" has systemd-logind add an ACL for the active-seat user (no `input`
+# group, no reboot); GROUP/MODE is the fallback for `usermod -aG input $USER`.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput", GROUP="input", MODE="0660"
