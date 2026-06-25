@@ -55,7 +55,7 @@ cat > "$APP_DIR/poe2-overlay-pricecheck.desktop" <<EOF
 Type=Application
 Name=PoE2 Overlay Price Check
 Comment=Trigger a PoE2 price check (forwards --price-check to the running overlay)
-Exec=$BIN --price-check
+Exec="$BIN" --price-check
 Icon=$APPID
 Terminal=false
 NoDisplay=true
@@ -65,7 +65,7 @@ cat > "$APP_DIR/poe2-overlay-hide.desktop" <<EOF
 Type=Application
 Name=PoE2 Overlay Hide
 Comment=Hide the PoE2 overlay (panic dismiss; forwards --hide to the running overlay)
-Exec=$BIN --hide
+Exec="$BIN" --hide
 Icon=$APPID
 Terminal=false
 NoDisplay=true
@@ -75,7 +75,7 @@ cat > "$AUTOSTART_DIR/poe2-overlay.desktop" <<EOF
 Type=Application
 Name=PoE2 Overlay
 Comment=Warm PoE2 trade overlay (starts hidden; price-check shows it via Ctrl+Alt+D)
-Exec=$WAYLAND_ENV $BIN
+Exec=$WAYLAND_ENV "$BIN"
 Icon=$APPID
 Terminal=false
 X-GNOME-Autostart-enabled=true
