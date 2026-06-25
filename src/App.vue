@@ -39,11 +39,24 @@ interface PriceResult {
   league: string;
   leagues: string[];
 }
+type DangerLevel = "safe" | "caution" | "dangerous" | "deadly";
+interface DangerFlag {
+  severity: DangerLevel;
+  label: string;
+  matched: string;
+  why: string;
+}
+interface DangerReport {
+  item: string;
+  level: DangerLevel;
+  flags: DangerFlag[];
+}
 
 const itemName = ref("");
 const loading = ref(false); // initial price check in flight
 const busy = ref(false); // requery in flight
 const result = ref<PriceResult | null>(null);
+const danger = ref<DangerReport | null>(null); // set for waystones (T7), instead of a price
 const stats = ref<ParsedStat[]>([]);
 const baseProps = ref<BaseProp[]>([]);
 const leagues = ref<string[]>([]);
@@ -56,6 +69,7 @@ const unlisten: UnlistenFn[] = [];
 const hasFilters = computed(() => stats.value.length > 0 || baseProps.value.length > 0);
 
 function applyResult(r: PriceResult) {
+  danger.value = null; // a price result replaces any prior waystone danger panel
   result.value = r;
   itemName.value = r.item;
   // Echoed filters carry the toggle state forward, so editing persists across requeries.
@@ -100,13 +114,27 @@ onMounted(async () => {
       reqGen.value++; // invalidate any in-flight requery for the previous item
       itemName.value = e.payload;
       result.value = null;
+      danger.value = null;
       stats.value = [];
       baseProps.value = [];
       loading.value = true;
+      busy.value = false; // a new check abandons any in-flight requery
     }),
   );
   unlisten.push(
     await listen<PriceResult>("price-check-result", (e) => applyResult(e.payload)),
+  );
+  unlisten.push(
+    await listen<DangerReport>("price-check-danger", (e) => {
+      reqGen.value++; // a waystone check also invalidates any in-flight requery
+      danger.value = e.payload;
+      itemName.value = e.payload.item;
+      result.value = null;
+      loading.value = false;
+      busy.value = false; // no price result follows a danger check — reset the requery flag here
+      stats.value = [];
+      baseProps.value = [];
+    }),
   );
 });
 
@@ -124,6 +152,24 @@ onUnmounted(() => {
       <div v-if="!itemName" class="hint">
         Hover an item in PoE2 and press Ctrl+Alt+D…
       </div>
+
+      <template v-else-if="danger">
+        <header class="head">
+          <div class="name">{{ itemName }}</div>
+          <span class="level" :class="danger.level">{{ danger.level }}</span>
+        </header>
+        <ul v-if="danger.flags.length" class="flags">
+          <li v-for="(f, i) in danger.flags" :key="i" class="flag" :class="f.severity">
+            <span class="dot"></span>
+            <div class="fbody">
+              <div class="flabel">{{ f.label }}</div>
+              <div class="fwhy">{{ f.why }}</div>
+              <div v-if="f.matched" class="fmod">{{ f.matched }}</div>
+            </div>
+          </li>
+        </ul>
+        <div v-else class="status safe">No dangerous mods — safe to run.</div>
+      </template>
 
       <template v-else>
         <header class="head">
@@ -366,6 +412,88 @@ body,
 
 .age {
   font-size: 11px;
+  color: #7e8aa0;
+}
+
+.status.safe {
+  color: #8fe3a0;
+}
+
+/* --- waystone danger panel (T7) --- */
+.level {
+  align-self: flex-start;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #0a0c14;
+}
+.level.safe {
+  background: #8fe3a0;
+}
+.level.caution {
+  background: #e8c98a;
+}
+.level.dangerous {
+  background: #ff9d5c;
+}
+.level.deadly {
+  background: #ff6b6b;
+}
+
+.flags {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.flag {
+  display: flex;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(120, 180, 255, 0.12);
+}
+
+.flag .dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+}
+.flag.caution .dot {
+  background: #e8c98a;
+}
+.flag.dangerous .dot {
+  background: #ff9d5c;
+}
+.flag.deadly .dot {
+  background: #ff6b6b;
+}
+
+.fbody {
+  min-width: 0;
+}
+
+.flabel {
+  font-weight: 600;
+  color: #eaf2ff;
+}
+
+.fwhy {
+  font-weight: 400;
+  font-size: 12px;
+  color: #aebfd6;
+}
+
+.fmod {
+  margin-top: 2px;
+  font: 400 11px/1.4 "JetBrains Mono", ui-monospace, monospace;
   color: #7e8aa0;
 }
 </style>

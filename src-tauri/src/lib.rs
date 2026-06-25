@@ -7,6 +7,7 @@
 //! prices it against the GGG trade2 API + poe.ninja (`trade`). The pieces are
 //! stubbed here and wired per the active plan (T2-T4).
 
+mod danger;
 mod hotkey;
 mod overlay;
 mod trade;

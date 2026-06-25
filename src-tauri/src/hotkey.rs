@@ -21,6 +21,7 @@ use evdev::{AttributeSet, EventType, InputEvent, Key};
 use tauri::{AppHandle, Emitter, Manager};
 use x11_clipboard::Clipboard;
 
+use crate::danger;
 use crate::trade;
 
 const KEY_PRESS: i32 = 1;
@@ -108,6 +109,21 @@ pub fn price_check(app: &AppHandle) {
         show_overlay(app);
         return;
     };
+
+    // Waystone? Route to the danger-checker instead of pricing (T7, ADR-0005): a local,
+    // instant, quota-free mod analysis emitted on `price-check-danger`. Waystones are not
+    // priced — the danger verdict is what matters before running one.
+    if danger::is_waystone(&parsed) {
+        let report = danger::analyze(&parsed);
+        eprintln!(
+            "[hotkey] waystone danger: {:?} ({} flag(s))",
+            report.level,
+            report.flags.len()
+        );
+        let _ = app.emit("price-check-danger", report);
+        show_overlay(app);
+        return;
+    }
 
     // Two-phase contract (ADR-0004): `price-check-loading` shows the card immediately
     // while the trade2 round-trip runs; `price-check-result` carries the listings.

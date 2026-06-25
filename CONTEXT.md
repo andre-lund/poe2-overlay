@@ -35,3 +35,16 @@ _Avoid_: "exchange" for gear; "search" for bulk.
 **Proton game**:
 PoE2 running under Steam Proton — an XWayland client from the compositor's view.
 The overlay is a native Wayland client composited on top of it.
+
+**Waystone**:
+A PoE2 map item (item class `Waystones`); its affix mods determine the dangers of the
+area it opens. Parsed through the gear path (mods land in the item's stat list), but
+**not priced** — a price-check on a waystone runs the danger-check instead.
+_Avoid_: "map" (reserve for the area/instance), "scarab", "sextant".
+
+**Danger-check**:
+The waystone analysis path: the price-check hotkey, on a waystone, matches its mods
+against a build-agnostic ruleset and emits a danger verdict (`price-check-danger`,
+ADR-0005) — a [`DangerLevel`] (Safe/Caution/Dangerous/Deadly) plus the matched
+dangers — instead of pricing. Local, instant, zero GGG quota.
+_Avoid_: "price" for a waystone; "mod roll" for the danger flags.
