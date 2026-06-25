@@ -57,6 +57,8 @@ pub fn run() {
                 }
                 Err(e) => eprintln!("[hotkey] cannot open /dev/uinput ({e}); item copy disabled"),
             }
+            // Warm pricing client + caches kept in state across checks (T4, ADR-0004).
+            app.manage(trade::Pricing::new());
             Ok(())
         })
         .run(tauri::generate_context!())

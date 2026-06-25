@@ -37,4 +37,7 @@ gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 evdev = "0.12"                   # uinput virtual device (Ctrl+C synth); /dev/uinput ACL, no `input` group
 x11-clipboard = "0.9"            # read the X11 CLIPBOARD selection (XWayland/Proton writes there)
 
-# reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }  # T4: GGG trade2 API
+# T4 pricing core: warm async client for the GGG trade2 API + poe.ninja (ADR-0004).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+urlencoding = "2"                # percent-encode the league into the trade2 search path segment
+regex = "1"                      # item-text + stat-line parsing (level/quality/tier/value extraction)
