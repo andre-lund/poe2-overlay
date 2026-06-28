@@ -131,6 +131,32 @@ function hide() {
   invoke("hide_overlay");
 }
 
+// Human label for a base-property filter so each checkbox says what it matches, not
+// just a bare value (the id is the stable key from the backend's build_base_properties).
+function propKind(id: string): string {
+  switch (id) {
+    case "class":
+      return "Class";
+    case "rarity":
+      return "Rarity";
+    case "base":
+      return "Base type";
+    case "name":
+      return "Name";
+    case "ilvl":
+      return "Item level";
+    case "gemLevel":
+      return "Gem level";
+    case "quality":
+      return "Quality";
+    case "sockets":
+    case "gem_sockets":
+      return "Sockets";
+    default:
+      return "Filter";
+  }
+}
+
 function onKey(e: KeyboardEvent) {
   if (e.key === "Escape") hide();
 }
@@ -247,12 +273,14 @@ onUnmounted(() => {
 
       <template v-else>
         <header class="head">
-          <div class="name">{{ itemName }}</div>
+          <div class="name">{{ itemName || "Unrecognized item" }}</div>
           <label v-if="leagues.length" class="league-field">
             <span class="field-label">League</span>
-            <select v-model="selectedLeague" class="league" :disabled="busy" @change="requery">
-              <option v-for="lg in leagues" :key="lg" :value="lg">{{ lg }}</option>
-            </select>
+            <div class="select-wrap">
+              <select v-model="selectedLeague" class="league" :disabled="busy" @change="requery">
+                <option v-for="lg in leagues" :key="lg" :value="lg">{{ lg }}</option>
+              </select>
+            </div>
           </label>
         </header>
 
@@ -264,6 +292,7 @@ onUnmounted(() => {
 
           <label v-for="bp in baseProps" :key="bp.id" class="row">
             <input v-model="bp.active" type="checkbox" :disabled="busy" />
+            <span class="fkind">{{ propKind(bp.id) }}</span>
             <span class="ftext">{{ bp.text }}</span>
           </label>
 
@@ -399,14 +428,48 @@ body,
   color: #8aa0bf;
 }
 
-.league {
+/* WebKitGTK renders a native <select>'s value text in the GTK theme colour (dark,
+   near-invisible on this panel) and ignores `color` — `appearance: none` is what makes
+   it honour our CSS. The caret is drawn on the wrapper (a rotated border square) so it
+   never depends on the native widget's own arrow. */
+.select-wrap {
+  position: relative;
   max-width: 100%;
-  padding: 5px 9px;
+}
+
+.select-wrap::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 13px;
+  width: 8px;
+  height: 8px;
+  margin-top: -6px;
+  border-right: 2px solid #9fc4ff;
+  border-bottom: 2px solid #9fc4ff;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.league {
+  appearance: none;
+  -webkit-appearance: none;
+  max-width: 100%;
+  padding: 7px 34px 7px 11px;
   border-radius: 7px;
-  border: 1px solid rgba(130, 190, 255, 0.5);
-  background: #161b29;
-  color: #e8eefb;
-  font: 600 14px/1.4 Inter, system-ui, sans-serif;
+  border: 1px solid rgba(130, 190, 255, 0.6);
+  background: #1a2133;
+  color: #f2f6ff;
+  font: 700 14px/1.4 Inter, system-ui, sans-serif;
+}
+
+.league:disabled {
+  opacity: 0.75;
+}
+
+.league option {
+  background: #1a2133;
+  color: #f2f6ff;
 }
 
 .filters {
@@ -454,6 +517,18 @@ body,
   accent-color: #6aa8ff;
 }
 
+/* Field name on a base-property row ("Class", "Base type", …) so a ticked box is
+   self-explanatory; fixed width keeps the values aligned in a column. */
+.fkind {
+  flex: none;
+  width: 78px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #8aa0bf;
+}
+
 .ftext {
   flex: 1;
   min-width: 0;
@@ -465,7 +540,7 @@ body,
 
 .stat .num {
   flex: none;
-  width: 46px;
+  width: 54px;
   padding: 3px 5px;
   border-radius: 6px;
   border: 1px solid rgba(130, 190, 255, 0.4);

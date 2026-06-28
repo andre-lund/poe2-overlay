@@ -366,27 +366,36 @@ fn weighted_bound(line: &str, value: Option<f64>) -> String {
 /// Build the toggleable base-property list with the reference's default active flags.
 fn build_base_properties(item: &ParsedItem, base_type: &str) -> Vec<BaseProp> {
     let is_magic_rare = item.rarity == "Magic" || item.rarity == "Rare";
-    let mut props = vec![
-        BaseProp {
+    // Only emit a base-property filter when it carries a real value. A blank class/
+    // rarity/base (the parser couldn't resolve it) would otherwise show as an unlabeled
+    // checkbox — and a blank *active* base type makes the trade2 search 400 ("Invalid
+    // search (check base type)"), so an empty value must never default to active.
+    let mut props: Vec<BaseProp> = Vec::new();
+    if !item.item_class.trim().is_empty() {
+        props.push(BaseProp {
             id: "class".into(),
             text: item.item_class.clone(),
             value: item.item_class.clone(),
             active: is_magic_rare,
-        },
-        BaseProp {
+        });
+    }
+    if !item.rarity.trim().is_empty() {
+        props.push(BaseProp {
             id: "rarity".into(),
             text: item.rarity.clone(),
             value: item.rarity.clone(),
             active: false,
-        },
-        BaseProp {
+        });
+    }
+    if !base_type.trim().is_empty() {
+        props.push(BaseProp {
             id: "base".into(),
             text: base_type.to_string(),
             value: base_type.to_string(),
             active: !is_magic_rare,
-        },
-    ];
-    if item.rarity == "Unique" {
+        });
+    }
+    if item.rarity == "Unique" && !item.name.trim().is_empty() {
         props.push(BaseProp {
             id: "name".into(),
             text: item.name.clone(),
