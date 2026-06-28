@@ -248,18 +248,20 @@ onUnmounted(() => {
       <template v-else>
         <header class="head">
           <div class="name">{{ itemName }}</div>
-          <select
-            v-if="leagues.length"
-            v-model="selectedLeague"
-            class="league"
-            :disabled="busy"
-            @change="requery"
-          >
-            <option v-for="lg in leagues" :key="lg" :value="lg">{{ lg }}</option>
-          </select>
+          <label v-if="leagues.length" class="league-field">
+            <span class="field-label">League</span>
+            <select v-model="selectedLeague" class="league" :disabled="busy" @change="requery">
+              <option v-for="lg in leagues" :key="lg" :value="lg">{{ lg }}</option>
+            </select>
+          </label>
         </header>
 
         <section v-if="hasFilters" class="filters">
+          <div class="filters-head">
+            <span class="filters-title">Search filters</span>
+            <span class="filters-hint">Tick the item properties to match in the trade search</span>
+          </div>
+
           <label v-for="bp in baseProps" :key="bp.id" class="row">
             <input v-model="bp.active" type="checkbox" :disabled="busy" />
             <span class="ftext">{{ bp.text }}</span>
@@ -323,86 +325,133 @@ body,
   inset: 6px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: 11px;
+  padding: 15px 17px;
   overflow-y: auto;
-  border-radius: 10px;
-  background: rgba(10, 12, 20, 0.92);
-  border: 1px solid rgba(120, 180, 255, 0.55);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
-  color: #cfe3ff;
-  font: 600 13px/1.4 Inter, system-ui, sans-serif;
+  border-radius: 11px;
+  /* Near-opaque: an 8%-transparent panel let the bright game scene bleed through and
+     wash out the text. A solid dark backdrop is the single biggest readability win. */
+  background: #0d1019;
+  border: 1px solid rgba(130, 190, 255, 0.7);
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.65),
+    inset 0 1px 0 rgba(150, 200, 255, 0.08);
+  color: #e8eefb;
+  font: 600 14.5px/1.45 Inter, system-ui, sans-serif;
   pointer-events: auto;
 }
 
 .close {
   position: absolute;
-  top: 8px;
-  right: 10px;
-  width: 24px;
-  height: 24px;
+  top: 9px;
+  right: 11px;
+  width: 26px;
+  height: 26px;
   padding: 0;
-  border: none;
-  border-radius: 6px;
-  background: rgba(120, 180, 255, 0.15);
-  color: #cfe3ff;
-  font-size: 14px;
+  border: 1px solid rgba(130, 190, 255, 0.28);
+  border-radius: 7px;
+  background: rgba(130, 190, 255, 0.16);
+  color: #e8eefb;
+  font-size: 15px;
   line-height: 24px;
   cursor: pointer;
 }
 
 .close:hover {
-  background: rgba(120, 180, 255, 0.32);
+  background: rgba(130, 190, 255, 0.36);
 }
 
 .hint {
-  padding-right: 28px;
-  color: #aebfd6;
+  padding-right: 30px;
+  color: #c4d2e6;
   font-weight: 400;
 }
 
 .head {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-right: 28px;
+  gap: 9px;
+  padding-right: 30px;
 }
 
 .name {
-  font-size: 14px;
-  color: #e8c98a;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: #f3d9a0;
+}
+
+/* Labeled league control — a bare <select> read as plain text; the caption makes it
+   obviously a picker. */
+.league-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.field-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8aa0bf;
 }
 
 .league {
-  align-self: flex-start;
   max-width: 100%;
-  padding: 3px 6px;
-  border-radius: 6px;
-  border: 1px solid rgba(120, 180, 255, 0.35);
-  background: rgba(20, 24, 36, 0.95);
-  color: #cfe3ff;
-  font: inherit;
+  padding: 5px 9px;
+  border-radius: 7px;
+  border: 1px solid rgba(130, 190, 255, 0.5);
+  background: #161b29;
+  color: #e8eefb;
+  font: 600 14px/1.4 Inter, system-ui, sans-serif;
 }
 
 .filters {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 0;
-  border-top: 1px solid rgba(120, 180, 255, 0.14);
-  border-bottom: 1px solid rgba(120, 180, 255, 0.14);
+  gap: 6px;
+  padding: 11px 0;
+  border-top: 1px solid rgba(130, 190, 255, 0.18);
+  border-bottom: 1px solid rgba(130, 190, 255, 0.18);
+}
+
+/* Heading so the checkboxes' purpose is self-evident. */
+.filters-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 3px;
+}
+
+.filters-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9fc4ff;
+}
+
+.filters-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: #97a6bd;
 }
 
 .row {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-weight: 400;
+  gap: 9px;
+  font-weight: 500;
 }
 
 .row input[type="checkbox"] {
   flex: none;
-  accent-color: #78b4ff;
+  width: 17px;
+  height: 17px;
+  accent-color: #6aa8ff;
 }
 
 .ftext {
@@ -411,18 +460,18 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #c2d2ea;
+  color: #e6edf8;
 }
 
 .stat .num {
   flex: none;
-  width: 42px;
-  padding: 2px 4px;
-  border-radius: 5px;
-  border: 1px solid rgba(120, 180, 255, 0.3);
-  background: rgba(20, 24, 36, 0.95);
-  color: #cfe3ff;
-  font: inherit;
+  width: 46px;
+  padding: 3px 5px;
+  border-radius: 6px;
+  border: 1px solid rgba(130, 190, 255, 0.4);
+  background: #161b29;
+  color: #e8eefb;
+  font: 600 13px/1.4 Inter, system-ui, sans-serif;
   text-align: center;
 }
 
@@ -432,28 +481,28 @@ body,
 
 .requery {
   align-self: flex-start;
-  margin-top: 4px;
-  padding: 4px 12px;
+  margin-top: 6px;
+  padding: 7px 18px;
   border: none;
-  border-radius: 6px;
-  background: rgba(120, 180, 255, 0.22);
-  color: #eaf2ff;
-  font: 600 12px/1.4 Inter, system-ui, sans-serif;
+  border-radius: 7px;
+  background: #3f7fe0;
+  color: #ffffff;
+  font: 700 14px/1.4 Inter, system-ui, sans-serif;
   cursor: pointer;
 }
 
 .requery:hover:not(:disabled) {
-  background: rgba(120, 180, 255, 0.38);
+  background: #4f8df0;
 }
 
 .requery:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: default;
 }
 
 .status {
-  color: #aebfd6;
-  font-weight: 400;
+  color: #c4d2e6;
+  font-weight: 500;
 }
 
 .status.err {
@@ -475,18 +524,18 @@ body,
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  padding: 4px 0;
-  border-bottom: 1px solid rgba(120, 180, 255, 0.12);
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(130, 190, 255, 0.14);
 }
 
 .price {
-  font: 600 13px/1.4 "JetBrains Mono", ui-monospace, monospace;
-  color: #cfe3ff;
+  font: 700 14px/1.4 "JetBrains Mono", ui-monospace, monospace;
+  color: #eef4ff;
 }
 
 .age {
-  font-size: 11px;
-  color: #7e8aa0;
+  font-size: 12px;
+  color: #92a0b6;
 }
 
 .status.safe {

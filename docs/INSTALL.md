@@ -44,12 +44,15 @@ entry, and registers the KWin shortcuts:
 | binary | `~/.local/bin/poe2-overlay` | the app (warm instance + flag forwarders) |
 | `poe2-overlay-pricecheck.desktop` | `~/.local/share/applications/` | `Exec=… --price-check` |
 | `poe2-overlay-hide.desktop` | `~/.local/share/applications/` | `Exec=… --hide` (panic dismiss) |
-| `poe2-overlay-regex.desktop` | `~/.local/share/applications/` | `Exec=… --regex` (regex cheat-sheet) |
 | `poe2-overlay.desktop` | `~/.config/autostart/` | starts the **warm** instance on login |
-| `_launch` shortcuts | `kglobalshortcutsrc` | `Ctrl+Alt+D` price-check · `Ctrl+Alt+F` regex cheat-sheet · `Ctrl+Alt+X` hide |
+| `_launch` shortcuts | `kglobalshortcutsrc` | `Ctrl+Alt+D` price-check · `Ctrl+Alt+X` hide |
 
-Override the keys: `POE2_PRICECHECK_KEY="Meta+D" POE2_HIDE_KEY="Meta+X" POE2_REGEX_KEY="Meta+F" ./packaging/install.sh`
+Override the keys: `POE2_PRICECHECK_KEY="Meta+D" POE2_HIDE_KEY="Meta+X" ./packaging/install.sh`
 (KDE shortcut syntax), or change them later in System Settings → Keyboard → Shortcuts.
+
+> The regex cheat-sheet (T8, `Ctrl+Alt+F`) is **disabled for now** — the installer no longer
+> registers it and removes a prior install's shortcut on re-run. The backend + Vue panel are
+> retained, dormant, for an easy restore (ADR-0006).
 
 **Why autostart matters (ADR-0002):** the KDE shortcuts launch `poe2-overlay --price-check`,
 and `tauri-plugin-single-instance` forwards that flag to the *already-running* instance.
@@ -93,9 +96,7 @@ env GDK_BACKEND=wayland WEBKIT_DISABLE_DMABUF_RENDERER=1 ~/.local/bin/poe2-overl
    a **waystone**, a Safe/Caution/Dangerous/Deadly mod verdict — ADR-0005).
 3. In the price card: pick a **league**, toggle **stat / base filters** and edit min/max,
    then **Requery**.
-4. At a stash/vendor, press **Ctrl+Alt+F** for the **regex cheat-sheet**: click a pattern
-   to copy it, then Ctrl+V into the in-game Ctrl-F search box (ADR-0006).
-5. **✕** or **Ctrl+Alt+X** dismisses the overlay.
+4. **✕** or **Ctrl+Alt+X** dismisses the overlay.
 
 Currency/stackables price instantly via poe.ninja (no GGG quota); gear/waystones hit the
 GGG trade2 API, which self-throttles on its rate-limit headers (ADR-0004).

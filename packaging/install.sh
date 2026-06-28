@@ -24,7 +24,6 @@ BIN="$BIN_DIR/poe2-overlay"
 APPID="io.olund.poe2overlay"
 PRICE_KEY="${POE2_PRICECHECK_KEY:-Ctrl+Alt+D}"
 HIDE_KEY="${POE2_HIDE_KEY:-Ctrl+Alt+X}"
-REGEX_KEY="${POE2_REGEX_KEY:-Ctrl+Alt+F}"
 # main.rs sets these in-process too; the launcher exports them as belt-and-suspenders
 # so the GTK/WebKit backend is correct however the process is started (see ADR-0001).
 WAYLAND_ENV="env GDK_BACKEND=wayland WEBKIT_DISABLE_DMABUF_RENDERER=1"
@@ -71,16 +70,6 @@ Icon=$APPID
 Terminal=false
 NoDisplay=true
 EOF
-cat > "$APP_DIR/poe2-overlay-regex.desktop" <<EOF
-[Desktop Entry]
-Type=Application
-Name=PoE2 Overlay Regex Cheat-sheet
-Comment=Open the PoE2 search-regex cheat-sheet (forwards --regex to the running overlay)
-Exec="$BIN" --regex
-Icon=$APPID
-Terminal=false
-NoDisplay=true
-EOF
 cat > "$AUTOSTART_DIR/poe2-overlay.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -96,8 +85,12 @@ echo "✓ Wrote launchers + autostart in $APP_DIR / $AUTOSTART_DIR"
 # 3. Register the KWin global shortcuts (the .desktop files own the keys, per ADR-0002).
 kwriteconfig6 --file kglobalshortcutsrc --group services --group poe2-overlay-pricecheck.desktop --key _launch "$PRICE_KEY"
 kwriteconfig6 --file kglobalshortcutsrc --group services --group poe2-overlay-hide.desktop --key _launch "$HIDE_KEY"
-kwriteconfig6 --file kglobalshortcutsrc --group services --group poe2-overlay-regex.desktop --key _launch "$REGEX_KEY"
-echo "✓ Registered shortcuts: price-check=$PRICE_KEY  hide=$HIDE_KEY  regex=$REGEX_KEY"
+echo "✓ Registered shortcuts: price-check=$PRICE_KEY  hide=$HIDE_KEY"
+
+# The T8 regex cheat-sheet (Ctrl+Alt+F) is disabled for now — clean up a prior install's
+# launcher + shortcut so a re-run actually removes it (idempotent; no-op if never installed).
+rm -f "$APP_DIR/poe2-overlay-regex.desktop"
+kwriteconfig6 --file kglobalshortcutsrc --group services --group poe2-overlay-regex.desktop --key _launch --delete 2>/dev/null || true
 
 # 4. /dev/uinput access (needed for the Ctrl+C synth; ADR-0002 — no `input` group on
 #    this machine, the session ACL grants it). Only print the privileged fix if missing.
@@ -117,4 +110,4 @@ echo "     new shortcuts AND the overlay autostarts warm. The shortcuts will NOT
 echo "     until kglobalacceld reloads — a fresh login is the reliable way."
 echo "  2. Start it now without relogging (optional):  $WAYLAND_ENV $BIN &"
 echo
-echo "Then in-game: hover an item + $PRICE_KEY to price-check; $REGEX_KEY for the regex cheat-sheet; $HIDE_KEY to hide."
+echo "Then in-game: hover an item + $PRICE_KEY to price-check; $HIDE_KEY to hide."

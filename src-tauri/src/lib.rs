@@ -14,7 +14,7 @@ mod hotkey;
 mod overlay;
 mod trade;
 
-use tauri::{Emitter, Manager, State, WebviewWindow};
+use tauri::{Manager, State, WebviewWindow};
 
 /// Hide the overlay surface. The card's ✕ control (and Esc) invoke this; the price
 /// check shows it again on the next Ctrl+Alt+D.
@@ -68,17 +68,11 @@ pub fn run() {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
                 }
-            } else if argv.iter().any(|a| a == "--regex") {
-                // Regex cheat-sheet (T8, ADR-0006): not item-driven — opened deliberately
-                // at a stash/vendor via its own KDE shortcut (Ctrl+Alt+F). Switch the
-                // overlay to the cheat-sheet panel and show it.
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.emit("show-regex", ());
-                    if !w.is_visible().unwrap_or(false) {
-                        let _ = w.show();
-                    }
-                }
             }
+            // The `--regex` cheat-sheet trigger (T8, ADR-0006) is disabled for now: the
+            // Ctrl+Alt+F entry point is removed (installer no longer registers it). The
+            // backend command + Vue panel are retained, dormant, for an easy restore —
+            // re-add the `--regex` branch here and the installer shortcut to re-enable.
         }))
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
