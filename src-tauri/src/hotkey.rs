@@ -96,7 +96,12 @@ pub fn price_check(app: &AppHandle) {
         }
     }
     let Some(text) = item else {
+        // Nothing was copied — no item under the cursor. Show the "No item" card rather
+        // than returning silently, so a keypress always gives visible feedback (otherwise
+        // the overlay looks dead when you trigger it off an item).
         eprintln!("[hotkey] clipboard still empty after ~800 ms — no item under the cursor?");
+        let _ = app.emit("price-check-result", trade::PriceResult::invalid());
+        show_overlay(app);
         return;
     };
     eprintln!("[hotkey] price check: {} chars copied", text.len());
