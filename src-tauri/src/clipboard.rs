@@ -4,7 +4,7 @@
 //! cheat-sheet needs to *write* it so the user can paste a pattern into the game's
 //! Ctrl-F box. We own the X11 CLIPBOARD selection directly (not the Wayland clipboard)
 //! because the Proton/XWayland game reads X11 — the write-side mirror of the read in
-//! `hotkey::read_x11_clipboard`. The owning [`Clipboard`] lives in Tauri state for the
+//! `hotkey::read_item`. The owning [`Clipboard`] lives in Tauri state for the
 //! process lifetime so its background thread keeps serving paste requests (the warm
 //! instance persists the whole session); `store` itself is non-blocking.
 

@@ -95,6 +95,14 @@ pub fn run() {
                 }
                 Err(e) => eprintln!("[hotkey] cannot open /dev/uinput ({e}); item copy disabled"),
             }
+            // Warm X11 CLIPBOARD reader, reused across price checks — a fresh connection
+            // per poll iteration races the selection handshake and reads empty.
+            match hotkey::Reader::build() {
+                Ok(reader) => {
+                    app.manage(reader);
+                }
+                Err(e) => eprintln!("[hotkey] cannot open X11 clipboard reader ({e}); item read disabled"),
+            }
             // Warm pricing client + caches kept in state across checks (T4, ADR-0004).
             app.manage(trade::Pricing::new());
             // Persistent X11 clipboard owner for the regex cheat-sheet write (T8, ADR-0006).
