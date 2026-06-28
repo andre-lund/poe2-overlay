@@ -61,6 +61,15 @@ pub fn parse_item(text: &str) -> Option<ParsedItem> {
         return None;
     }
 
+    // A real PoE2 item copy always begins with an "Item Class:" header line. When
+    // Ctrl+Alt+D fires with no item under the cursor the synthesized Ctrl+C copies
+    // nothing, leaving whatever arbitrary text was already on the clipboard — reject it
+    // here so the caller shows "No item" instead of feeding random text to the pricer
+    // (an empty rarity would otherwise route it through bulk → gear and 400 the search).
+    if !lines.iter().any(|l| l.starts_with("Item Class:")) {
+        return None;
+    }
+
     let mut item = ParsedItem {
         item_class: String::new(),
         rarity: String::new(),
@@ -244,6 +253,14 @@ mod tests {
     #[test]
     fn empty_text_is_none() {
         assert!(parse_item("   \n  \n").is_none());
+    }
+
+    #[test]
+    fn arbitrary_clipboard_text_is_none() {
+        // Non-item text (e.g. a note left on the clipboard when no item was under the
+        // cursor) has no "Item Class:" header — must be rejected, not priced.
+        assert!(parse_item("lets do some research into this before any decisions").is_none());
+        assert!(parse_item("https://example.com/foo?bar=baz").is_none());
     }
 
     #[test]

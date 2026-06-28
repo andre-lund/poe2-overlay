@@ -139,10 +139,10 @@ impl PriceResult {
     /// Result for clipboard text that did not parse as a PoE2 item.
     pub fn invalid() -> Self {
         PriceResult::message(
-            "Not an item",
+            "No item",
             DEFAULT_LEAGUE,
             PriceStatus::Error,
-            "Clipboard does not contain a valid item",
+            "No PoE2 item under the cursor — hover an item, then press Ctrl+Alt+D.",
             Vec::new(),
         )
     }
