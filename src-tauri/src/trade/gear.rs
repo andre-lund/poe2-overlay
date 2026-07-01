@@ -11,19 +11,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
-use super::stats::{base_name, StatMapper};
+use super::stats::{base_name, StatMapper, StatMatch};
 use super::{
-    display_name, BaseProp, CacheSnapshot, Listing, ParsedItem, ParsedStat, PriceResult,
+    display_name, BaseProp, CacheSnapshot, ItemStat, Listing, ParsedItem, ParsedStat, PriceResult,
     PriceStatus, RateLimit,
 };
 
 const SEARCH_BASE: &str = "https://www.pathofexile.com/api/trade2/search/poe2/";
 const FETCH_BASE: &str = "https://www.pathofexile.com/api/trade2/fetch/";
-
-/// Explicit single-element resistance stat ids, summed into a pseudo total.
-const ELE_IDS: &[&str] = &["stat_3372524247", "stat_4220027924", "stat_1671376347"];
-/// "to all Elemental Resistances" — counts triple toward the elemental total.
-const ALL_RES_ID: &str = "stat_2901986750";
 
 /// Map a PoE2 item class to its trade2 category id (`""` → no mapping).
 fn category_for(class: &str) -> Option<&'static str> {
@@ -282,69 +277,41 @@ pub async fn run_gear_query(
     )
 }
 
-/// Two-pass stat mapping: pass one aggregates element resistances into a pseudo
-/// total; pass two resolves every other line (preferring pseudo aggregates).
+/// Map every modifier line to its trade2 stat filter, preferring pseudo aggregates.
+///
+/// Each resistance stays per-element: a "+38% to Lightning Resistance" line maps to
+/// `pseudo.pseudo_total_lightning_resistance`, not a combined "total Elemental
+/// Resistance". The reference collapses fire/cold/lightning into one elemental-total
+/// pseudo, but that hides the item's actual mods and searches a far broader, cheaper
+/// pool (dragging the shown price down to a near-worthless lower bound). Per-element
+/// filters match items genuinely like the copied one, so both the display and the
+/// price are accurate. `find_trade_id(allow_pseudo = true)` already resolves each
+/// resistance (single, or "to all Elemental Resistances") to its own pseudo id.
 fn build_parsed_stats(mapper: &StatMapper, item: &ParsedItem, is_equip: bool) -> Vec<ParsedStat> {
     let mut out: Vec<ParsedStat> = Vec::new();
-    let mut ele_sum = 0.0_f64;
-    let mut best_ele_tier: Option<u32> = None;
-
     for stat in &item.stats {
         let source = Some(stat.source.as_str());
-        // Pass 1: detect single/all elemental resistance for aggregation.
-        if let Some(res) = mapper.find_trade_id(&stat.text, is_equip, source, false) {
-            let sid = res.id.rsplit('.').next().unwrap_or(&res.id);
-            if ELE_IDS.contains(&sid) {
-                ele_sum += res.value.unwrap_or(0.0);
-                best_ele_tier = better_tier(best_ele_tier, stat.tier);
-                continue;
-            }
-            if sid == ALL_RES_ID {
-                ele_sum += res.value.unwrap_or(0.0) * 3.0;
-                best_ele_tier = better_tier(best_ele_tier, stat.tier);
-                continue;
-            }
-        }
-        // Pass 2: final mapping (pseudo aggregates allowed).
         if let Some(res) = mapper.find_trade_id(&stat.text, is_equip, source, true) {
-            let is_neg = res.is_negative || res.value.is_some_and(|v| v < 0.0);
-            let cval = weighted_bound(&stat.text, res.value);
-            out.push(ParsedStat {
-                id: res.id,
-                text: stat.text.clone(),
-                tier: stat.tier,
-                value: res.value,
-                min: if is_neg { String::new() } else { cval.clone() },
-                max: if is_neg { cval } else { String::new() },
-                active: true,
-            });
+            out.push(parsed_stat(stat, res));
         }
-    }
-
-    if ele_sum > 0.0 {
-        let cval = (ele_sum * 0.8).round();
-        out.insert(
-            0,
-            ParsedStat {
-                id: "pseudo.pseudo_total_elemental_resistance".to_string(),
-                text: format!("+{}% total Elemental Resistance", ele_sum as i64),
-                tier: best_ele_tier,
-                value: Some(ele_sum),
-                min: format!("{}", cval as i64),
-                max: String::new(),
-                active: true,
-            },
-        );
     }
     out
 }
 
-/// Lower tier number = better roll; keep the smallest seen.
-fn better_tier(current: Option<u32>, candidate: Option<u32>) -> Option<u32> {
-    match (current, candidate) {
-        (Some(c), Some(n)) => Some(c.min(n)),
-        (None, n) => n,
-        (c, None) => c,
+/// Build a [`ParsedStat`] from a resolved [`StatMatch`]: seed the search bound (80% of the
+/// roll, or the full value for flat/granted lines) on the min side — or the max side when
+/// the value is negative (a reduced/less mod).
+fn parsed_stat(stat: &ItemStat, res: StatMatch) -> ParsedStat {
+    let is_neg = res.is_negative || res.value.is_some_and(|v| v < 0.0);
+    let cval = weighted_bound(&stat.text, res.value);
+    ParsedStat {
+        id: res.id,
+        text: stat.text.clone(),
+        tier: stat.tier,
+        value: res.value,
+        min: if is_neg { String::new() } else { cval.clone() },
+        max: if is_neg { cval } else { String::new() },
+        active: true,
     }
 }
 
@@ -681,5 +648,93 @@ fn result(
         base_properties,
         league: league.to_string(),
         leagues: snapshot.leagues.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::trade::StatEntry;
+
+    /// The three single-element resistance stat ids, so a copied resistance line resolves
+    /// to its own per-element pseudo.
+    fn res_stats() -> Vec<StatEntry> {
+        vec![
+            StatEntry {
+                id: "explicit.stat_3372524247".into(),
+                text: "#% to Fire Resistance".into(),
+            },
+            StatEntry {
+                id: "explicit.stat_4220027924".into(),
+                text: "#% to Cold Resistance".into(),
+            },
+            StatEntry {
+                id: "explicit.stat_1671376347".into(),
+                text: "#% to Lightning Resistance".into(),
+            },
+        ]
+    }
+
+    fn gloves_with(mods: &[&str]) -> ParsedItem {
+        ParsedItem {
+            item_class: "Gloves".into(),
+            rarity: "Rare".into(),
+            name: "Test Gloves".into(),
+            base_type: "Test Gloves".into(),
+            is_bulk: false,
+            ilvl: None,
+            quality: None,
+            sockets: None,
+            gem_level: None,
+            stats: mods
+                .iter()
+                .map(|t| ItemStat {
+                    text: (*t).into(),
+                    tier: None,
+                    source: "explicit".into(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn single_resistance_keeps_its_specific_stat() {
+        let entries = res_stats();
+        let mapper = StatMapper::new(&entries);
+        let item = gloves_with(&["+38% to Cold Resistance"]);
+        let out = build_parsed_stats(&mapper, &item, true);
+        // A lone resistance must NOT collapse into the (mislabeled, too-broad) elemental total.
+        assert!(!out
+            .iter()
+            .any(|s| s.id == "pseudo.pseudo_total_elemental_resistance"));
+        let cold = out
+            .iter()
+            .find(|s| s.id == "pseudo.pseudo_total_cold_resistance")
+            .expect("maps to the cold-resistance pseudo");
+        assert_eq!(cold.text, "+38% to Cold Resistance");
+        assert_eq!(cold.min, "30"); // 0.8 * 38 = 30.4 → 30
+    }
+
+    #[test]
+    fn multiple_resistances_stay_per_element() {
+        let entries = res_stats();
+        let mapper = StatMapper::new(&entries);
+        let item = gloves_with(&["+45% to Fire Resistance", "+30% to Cold Resistance"]);
+        let out = build_parsed_stats(&mapper, &item, true);
+        // Each resistance keeps its own per-element pseudo — no combined "total Elemental
+        // Resistance" (that hid the real mods and searched a far broader, cheaper pool).
+        assert!(!out
+            .iter()
+            .any(|s| s.id == "pseudo.pseudo_total_elemental_resistance"));
+        let fire = out
+            .iter()
+            .find(|s| s.id == "pseudo.pseudo_total_fire_resistance")
+            .expect("fire pseudo emitted");
+        assert_eq!(fire.min, "36"); // 0.8 * 45 = 36
+        let cold = out
+            .iter()
+            .find(|s| s.id == "pseudo.pseudo_total_cold_resistance")
+            .expect("cold pseudo emitted");
+        assert_eq!(cold.min, "24"); // 0.8 * 30 = 24
     }
 }

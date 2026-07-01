@@ -19,7 +19,6 @@ use std::time::Duration;
 use evdev::uinput::{VirtualDevice, VirtualDeviceBuilder};
 use evdev::{AttributeSet, EventType, InputEvent, Key};
 use tauri::{AppHandle, Emitter, Manager};
-use x11_clipboard::Clipboard;
 
 use crate::danger;
 use crate::trade;
@@ -44,22 +43,6 @@ impl Drop for InFlight {
 /// The uinput virtual keyboard, built once at startup and kept warm in Tauri
 /// state so each price check reuses it.
 pub struct Synth(pub Mutex<VirtualDevice>);
-
-/// A warm X11 CLIPBOARD reader, kept in Tauri state. Opening a fresh `Clipboard`
-/// (xfixes connection + helper thread) on every poll iteration races the selection
-/// handshake and reads empty even when the game has set it — one reused connection
-/// fixes that. Built via [`Reader::build`] and stored with `app.manage`.
-pub struct Reader(pub Mutex<Clipboard>);
-
-impl Reader {
-    /// Open the X11 connection used to read the CLIPBOARD selection. Needs an X11
-    /// display (XWayland is present on this KDE session).
-    pub fn build() -> Result<Self, String> {
-        Clipboard::new()
-            .map(|c| Reader(Mutex::new(c)))
-            .map_err(|e| e.to_string())
-    }
-}
 
 /// Build the uinput device used to synthesize the in-game copy. Needs write
 /// access to `/dev/uinput` (session ACL; no `input` group). Store the result in
@@ -100,6 +83,19 @@ pub fn price_check(app: &AppHandle) {
     }
     let _in_flight = InFlight;
 
+    // Snapshot the clipboard BEFORE the copy. Clearing it doesn't work here (wl-copy
+    // --clear drops the Wayland owner and KWin just re-presents the stale X11 selection),
+    // so instead we wait for the content to actually CHANGE to the new item — reading too
+    // early otherwise returns the previous item (the off-by-one bug).
+    let before = read_clipboard();
+
+    // Hide any card still on screen before copying: the centred overlay captures the
+    // pointer, so a visible card sitting over the cursor stops the game from registering
+    // the hovered item (then Ctrl+C copies nothing). The new result re-shows it.
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+
     let Some(synth) = app.try_state::<Synth>() else {
         eprintln!("[hotkey] synth device unavailable (is /dev/uinput writable?)");
         return;
@@ -108,25 +104,33 @@ pub fn price_check(app: &AppHandle) {
         eprintln!("[hotkey] synth copy failed: {e}");
         return;
     }
-    // The game's copy reaches the X11 CLIPBOARD only after KWin's XWayland clipboard
-    // sync, which is racy: a single read often catches a transient-empty state mid-sync,
-    // so the item appears only on a *later* read (PathofTrading retries for exactly this
-    // reason). Poll until the clipboard holds a non-empty item, or give up (~800 ms).
-    let reader_state = app.try_state::<Reader>();
-    let reader = reader_state.as_deref();
+    // The game's copy reaches the clipboard only after KWin's XWayland sync, which lags a
+    // few hundred ms. Poll until the clipboard CHANGES to a fresh item (vs the snapshot),
+    // or give up (~1.5 s → "No item"). Waiting for the change is what kills the off-by-one
+    // (reading too early returns the previous item). But the FIRST synth of a session often
+    // does not land — ydotool's daemon is cold, or KWin's shortcut grab still holds the
+    // physical keys as we synthesize — which is the "first press shows nothing" symptom. So
+    // re-fire the copy once, partway through, if nothing has changed yet. Re-firing is safe:
+    // we still only accept a clipboard that actually changed, so a re-synth can never surface
+    // a stale item.
     let mut item = None;
-    for _ in 0..20 {
-        thread::sleep(Duration::from_millis(40));
-        if let Some(text) = read_item(reader) {
-            item = Some(text); // read_item only returns a real item (has "Item Class:")
+    for i in 0..30 {
+        thread::sleep(Duration::from_millis(50));
+        let now = read_clipboard();
+        if now != before && now.contains("Item Class:") {
+            item = Some(now);
             break;
+        }
+        // ~0.5 s in with no fresh item: assume the first synth was dropped and try again.
+        if i == 10 {
+            let _ = synth_copy(&synth.0);
         }
     }
     let Some(text) = item else {
-        // Nothing was copied — no item under the cursor. Show the "No item" card rather
-        // than returning silently, so a keypress always gives visible feedback (otherwise
-        // the overlay looks dead when you trigger it off an item).
-        eprintln!("[hotkey] clipboard still empty after ~800 ms — no item under the cursor?");
+        // The clipboard never changed to a fresh item — no item under the cursor (or it is
+        // the same item as last check). Show the "No item" card so a keypress always gives
+        // visible feedback rather than the overlay looking dead.
+        eprintln!("[hotkey] no fresh item on the clipboard after ~1.5 s — no item under the cursor?");
         let _ = app.emit("price-check-result", trade::PriceResult::invalid());
         show_overlay(app);
         return;
@@ -187,7 +191,38 @@ fn show_overlay(app: &AppHandle) {
     }
 }
 
-/// Synthesize a clean Ctrl+C — PoE2's copy-item-under-cursor.
+/// Synthesize the in-game copy (Ctrl+C). Prefers **ydotool**: on this KDE Wayland +
+/// XWayland/Proton setup our own evdev uinput device's key events don't reach PoE2 (a
+/// manual Ctrl+C copies fine, ours doesn't), but ydotool's daemon device — the mechanism
+/// the PathofTrading reference proved on this exact machine — does. Falls back to the
+/// evdev device when ydotool's daemon socket isn't up.
+fn synth_copy(evdev: &Mutex<VirtualDevice>) -> std::io::Result<()> {
+    if synth_copy_ydotool() {
+        return Ok(());
+    }
+    synth_copy_evdev(evdev)
+}
+
+/// Drive Ctrl+C through ydotool's daemon (keycode 29 = LEFTCTRL, 46 = C; ydotool spaces
+/// the events itself). Returns `true` on success; `false` (a no-op) when the daemon socket
+/// is absent or ydotool is missing, so the caller falls back to the evdev device.
+fn synth_copy_ydotool() -> bool {
+    let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") else {
+        return false;
+    };
+    let socket = std::path::Path::new(&runtime).join(".ydotool_socket");
+    if !socket.exists() {
+        return false;
+    }
+    std::process::Command::new("ydotool")
+        .env("YDOTOOL_SOCKET", &socket)
+        .args(["key", "29:1", "46:1", "46:0", "29:0"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Fallback synth via our own evdev uinput device.
 ///
 /// KWin's global-shortcut grab on `Ctrl+Alt+D` stops the *game* from seeing the chord,
 /// but does NOT clear the seat's modifier state: at synth time the physical LEFTCTRL +
@@ -197,7 +232,7 @@ fn show_overlay(app: &AppHandle) {
 /// is held), then drive a well-spaced Ctrl-down → C → Ctrl-up so a frame-cadence game
 /// samples Ctrl as held across the C edge. `emit()` appends a SYN_REPORT per call, so the
 /// gaps between calls are what give the game time to register each transition.
-fn synth_copy(synth: &Mutex<VirtualDevice>) -> std::io::Result<()> {
+fn synth_copy_evdev(synth: &Mutex<VirtualDevice>) -> std::io::Result<()> {
     let mut dev = synth.lock().unwrap_or_else(|e| e.into_inner());
     let down = |k: Key| InputEvent::new(EventType::KEY, k.code(), KEY_PRESS);
     let up = |k: Key| InputEvent::new(EventType::KEY, k.code(), KEY_RELEASE);
@@ -227,47 +262,17 @@ fn synth_copy(synth: &Mutex<VirtualDevice>) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Read the freshly-copied PoE2 item text. The Proton/XWayland game writes the X11
-/// CLIPBOARD selection, but on some compositors KDE's Wayland mirror is what holds it —
-/// so try the warm X11 reader first (UTF8_STRING then STRING), then `wl-paste` and
-/// `xclip`, and accept the first source that holds a real item. Returns only text
-/// containing the `Item Class:` header so a stale non-item clipboard is ignored.
-fn read_item(reader: Option<&Reader>) -> Option<String> {
-    if let Some(r) = reader {
-        let clip = r.0.lock().unwrap_or_else(|e| e.into_inner());
-        for target in [clip.getter.atoms.utf8_string, clip.getter.atoms.string] {
-            if let Ok(bytes) = clip.load(
-                clip.getter.atoms.clipboard,
-                target,
-                clip.getter.atoms.property,
-                Duration::from_millis(80),
-            ) {
-                if let Ok(s) = String::from_utf8(bytes) {
-                    if s.contains("Item Class:") {
-                        return Some(s);
-                    }
-                }
-            }
-        }
+/// Current clipboard text (Wayland, via `wl-paste`); empty string if unreadable. KWin
+/// syncs the Proton/XWayland game's copy to the Wayland clipboard, and `wl-paste` is what
+/// the working reference read on this machine. Used to snapshot the clipboard before a
+/// copy and to poll for the change afterwards.
+fn read_clipboard() -> String {
+    let Ok(out) = std::process::Command::new("wl-paste").output() else {
+        return String::new();
+    };
+    if out.status.success() {
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    } else {
+        String::new()
     }
-    // Fallbacks for whichever selection actually holds the copy on this compositor.
-    if let Some(s) = read_cmd("wl-paste", &[]) {
-        if s.contains("Item Class:") {
-            return Some(s);
-        }
-    }
-    if let Some(s) = read_cmd("xclip", &["-selection", "clipboard", "-o"]) {
-        if s.contains("Item Class:") {
-            return Some(s);
-        }
-    }
-    None
-}
-
-/// Run a clipboard-reader binary; `None` if it is missing or exits non-zero.
-fn read_cmd(bin: &str, args: &[&str]) -> Option<String> {
-    let out = std::process::Command::new(bin).args(args).output().ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }

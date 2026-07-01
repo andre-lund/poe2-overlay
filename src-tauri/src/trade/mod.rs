@@ -768,8 +768,8 @@ mod net_tests {
     #[test]
     #[ignore = "hits the live GGG trade2 search+fetch API (uses rate-limit budget)"]
     fn smoke_gear_rare_body_armour() {
-        // "Requires: Level" is metadata (skipped); the two resistances aggregate into a
-        // pseudo elemental-resistance filter, life into pseudo total life.
+        // "Requires: Level" is metadata (skipped); each resistance maps to its own
+        // per-element pseudo, life into pseudo total life.
         let text = "Item Class: Body Armours\n\
             Rarity: Rare\n\
             Doom Shell\n\
@@ -798,11 +798,15 @@ mod net_tests {
         // The round-trip + serde must succeed (no Error status); a real query returns
         // Success or Empty depending on current listings.
         assert!(matches!(r.status, PriceStatus::Success | PriceStatus::Empty));
-        // Life + the elemental-resistance pseudo total must have been mapped.
+        // Life + each resistance mapped to its own per-element pseudo (no combined total).
         assert!(r
             .parsed_stats
             .iter()
-            .any(|s| s.id == "pseudo.pseudo_total_elemental_resistance"));
+            .any(|s| s.id == "pseudo.pseudo_total_fire_resistance"));
+        assert!(r
+            .parsed_stats
+            .iter()
+            .any(|s| s.id == "pseudo.pseudo_total_cold_resistance"));
         assert!(r.parsed_stats.iter().any(|s| s.id == "pseudo.pseudo_total_life"));
     }
 

@@ -116,11 +116,16 @@ record the result (borderless is the known-good fallback).
   the per-category overviews (Essences/Runes/Omens/…) are already exalt-denominated, so
   their `primaryValue` is used directly — the reference's `÷ rates["exalt"]` was a no-op,
   removed for clarity, not a behavior change.
-- **Stat-filter fidelity is faithful to the reference:** most stats map to pseudo
-  aggregates (total life/mana/ES/res/attributes), single + all elemental resistances are
-  summed into one pseudo total-elemental-resistance filter, and the seed bound is 80% of
+- **Stat-filter fidelity, with one deliberate divergence from the reference:** most stats
+  map to pseudo aggregates (total life/mana/ES/attributes), and the seed bound is 80% of
   the rolled value (full value for Grants Skill / Bonded / Adds; negative rolls bound the
-  `max`). Pseudo ids confirmed present in PoE2's `data/stats`.
+  `max`). Pseudo ids confirmed present in PoE2's `data/stats`. **Resistances stay
+  per-element** (fire/cold/lightning each → their own `pseudo_total_*_resistance`) rather
+  than the reference's sum-into-one-`total-elemental-resistance` — the aggregate hid the
+  item's actual mods (a lightning+cold item showed "+X% total Elemental Resistance") and
+  searched a far broader, cheaper pool, so the shown price was a near-worthless lower
+  bound. Per-element filters match items genuinely like the copied one → accurate display
+  and price. "to all Elemental Resistances" still maps to its own all-elemental pseudo.
 - **Rate-limit lockout hardened past the reference (review finding):** the reference (and
   our first cut) only self-throttled `window/limit` (~1 s) on a 429 and never armed GGG's
   real `Retry-After` penalty — fine per-keypress where the human throttles, dangerous in a
