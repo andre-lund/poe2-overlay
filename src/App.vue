@@ -34,6 +34,7 @@ interface PriceResult {
   item: string;
   message: string | null;
   listings: Listing[];
+  total: number | null;
   parsedStats: ParsedStat[];
   baseProperties: BaseProp[];
   league: string;
@@ -82,6 +83,20 @@ const reqGen = ref(0);
 const unlisten: UnlistenFn[] = [];
 
 const hasFilters = computed(() => stats.value.length > 0 || baseProps.value.length > 0);
+
+// Price spread over the fetched (cheapest-first) listings plus the search's total match
+// count, so a wall of identical floor prices reads as "the floor of a big pool" instead
+// of the item's value.
+const spread = computed(() => {
+  const r = result.value;
+  if (!r || r.listings.length < 2) return "";
+  const lo = r.listings[0].display;
+  const hi = r.listings[r.listings.length - 1].display;
+  const range = lo === hi ? lo : `${lo} – ${hi}`;
+  return r.total && r.total > r.listings.length
+    ? `${range} · cheapest ${r.listings.length} of ${r.total} matches`
+    : `${range} · ${r.listings.length} matches`;
+});
 
 function applyResult(r: PriceResult) {
   danger.value = null; // a price result replaces any prior waystone danger panel
@@ -311,6 +326,7 @@ onUnmounted(() => {
         <div v-if="loading" class="status">Searching market…</div>
 
         <template v-else-if="result">
+          <div v-if="spread" class="spread" :class="{ stale: busy }">{{ spread }}</div>
           <ul v-if="result.listings.length" class="listings" :class="{ stale: busy }">
             <li v-for="(l, i) in result.listings" :key="i" class="listing">
               <span class="price">{{ l.display }}</span>
@@ -582,6 +598,16 @@ body,
 
 .status.err {
   color: #ff9d9d;
+}
+
+.spread {
+  font-size: 12px;
+  font-weight: 600;
+  color: #9fc4ff;
+}
+
+.spread.stale {
+  opacity: 0.45;
 }
 
 .listings {

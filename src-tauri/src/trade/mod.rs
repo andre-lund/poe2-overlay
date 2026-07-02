@@ -129,6 +129,9 @@ pub struct PriceResult {
     /// Status / error text shown when there are no listings.
     pub message: Option<String>,
     pub listings: Vec<Listing>,
+    /// Total matches the trade2 search reported — the listings above are only the
+    /// cheapest few, so this is what turns "ten rows of 1 E" into a readable spread.
+    pub total: Option<u64>,
     pub parsed_stats: Vec<ParsedStat>,
     pub base_properties: Vec<BaseProp>,
     pub league: String,
@@ -159,6 +162,7 @@ impl PriceResult {
             item: item.to_string(),
             message: Some(message.into()),
             listings: Vec::new(),
+            total: None,
             parsed_stats: Vec::new(),
             base_properties: Vec::new(),
             league: league.to_string(),
@@ -188,6 +192,7 @@ fn bulk_result(
         item: display_name(item),
         message: None,
         listings: vec![listing],
+        total: None,
         parsed_stats: Vec::new(),
         base_properties: Vec::new(),
         league,
@@ -525,6 +530,7 @@ impl Pricing {
                 item: display_name(&item),
                 message: Some(format!("Rate limit approaching — wait {wait}s")),
                 listings: Vec::new(),
+                total: None,
                 parsed_stats,
                 base_properties,
                 league: lg,

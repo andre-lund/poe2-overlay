@@ -200,6 +200,7 @@ pub async fn run_gear_query(
         })
         .unwrap_or_default();
     let query_id = data.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+    let total = data.get("total").and_then(|v| v.as_u64());
 
     if result_ids.is_empty() {
         return result(
@@ -265,7 +266,7 @@ pub async fn run_gear_query(
         PriceStatus::Success
     };
     let message = listings.is_empty().then(|| "No priced listings".to_string());
-    result(
+    let mut res = result(
         &name,
         league,
         status,
@@ -274,7 +275,9 @@ pub async fn run_gear_query(
         parsed_stats,
         base_properties,
         snapshot,
-    )
+    );
+    res.total = total;
+    res
 }
 
 /// Map every modifier line to its trade2 stat filter, preferring pseudo aggregates.
@@ -359,7 +362,9 @@ fn build_base_properties(item: &ParsedItem, base_type: &str) -> Vec<BaseProp> {
             id: "base".into(),
             text: base_type.to_string(),
             value: base_type.to_string(),
-            active: !is_magic_rare,
+            // On for everything but Magic (the reference kept Rares off, but searching
+            // all bases of a class drags the price floor far below same-base listings).
+            active: item.rarity != "Magic",
         });
     }
     if item.rarity == "Unique" && !item.name.trim().is_empty() {
@@ -648,6 +653,7 @@ fn result(
         base_properties,
         league: league.to_string(),
         leagues: snapshot.leagues.clone(),
+        total: None,
     }
 }
 
