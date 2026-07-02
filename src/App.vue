@@ -65,6 +65,15 @@ interface Cheatsheet {
   categories: Category[];
   charLimit: number;
 }
+interface RuneEntry {
+  name: string;
+  display: string;
+  exaltVal: number;
+}
+interface RuneSheet {
+  league: string;
+  entries: RuneEntry[];
+}
 
 const itemName = ref("");
 const loading = ref(false); // initial price check in flight
@@ -72,6 +81,8 @@ const busy = ref(false); // requery in flight
 const result = ref<PriceResult | null>(null);
 const danger = ref<DangerReport | null>(null); // set for waystones (T7), instead of a price
 const cheatsheet = ref<Cheatsheet | null>(null); // set in regex mode (T8), not item-driven
+const runeSheet = ref<RuneSheet | null>(null); // set in rune-sheet mode (T9), not item-driven
+const runeFilter = ref(""); // rune sheet name filter
 const copiedRegex = ref(""); // the pattern just copied, for the "Copied" flash
 const stats = ref<ParsedStat[]>([]);
 const baseProps = ref<BaseProp[]>([]);
@@ -98,9 +109,20 @@ const spread = computed(() => {
     : `${range} · ${r.listings.length} matches`;
 });
 
+// Rune-name matching ignores case and apostrophes: poe.ninja ids lose the apostrophe
+// ("Craiceanns"), so a user typing the in-game "Craiceann's" must still hit.
+const filteredRunes = computed(() => {
+  const sheet = runeSheet.value;
+  if (!sheet) return [];
+  const q = runeFilter.value.toLowerCase().replace(/'/g, "").trim();
+  if (!q) return sheet.entries;
+  return sheet.entries.filter((e) => e.name.toLowerCase().replace(/'/g, "").includes(q));
+});
+
 function applyResult(r: PriceResult) {
   danger.value = null; // a price result replaces any prior waystone danger panel
   cheatsheet.value = null;
+  runeSheet.value = null;
   result.value = r;
   itemName.value = r.item;
   // Echoed filters carry the toggle state forward, so editing persists across requeries.
@@ -185,6 +207,7 @@ onMounted(async () => {
       result.value = null;
       danger.value = null;
       cheatsheet.value = null;
+      runeSheet.value = null;
       stats.value = [];
       baseProps.value = [];
       loading.value = true;
@@ -201,6 +224,7 @@ onMounted(async () => {
       itemName.value = e.payload.item;
       result.value = null;
       cheatsheet.value = null;
+      runeSheet.value = null;
       loading.value = false;
       busy.value = false; // no price result follows a danger check — reset the requery flag here
       stats.value = [];
@@ -223,7 +247,26 @@ onMounted(async () => {
       stats.value = [];
       baseProps.value = [];
       copiedRegex.value = "";
+      runeSheet.value = null;
       cheatsheet.value = sheet;
+    }),
+  );
+  unlisten.push(
+    await listen("show-runes", async () => {
+      reqGen.value++; // opening the rune sheet abandons any in-flight requery
+      busy.value = false;
+      // Same anti-flash pattern as show-regex: fetch first (one poe.ninja round-trip),
+      // then swap panels atomically so the prior card holds until the sheet is ready.
+      const sheet = await invoke<RuneSheet>("get_rune_sheet");
+      loading.value = false;
+      result.value = null;
+      danger.value = null;
+      itemName.value = "";
+      stats.value = [];
+      baseProps.value = [];
+      cheatsheet.value = null;
+      runeFilter.value = "";
+      runeSheet.value = sheet;
     }),
   );
 });
@@ -262,6 +305,27 @@ onUnmounted(() => {
           Click a pattern → paste (Ctrl+V) into the in-game Ctrl-F box · max
           {{ cheatsheet.charLimit }} chars
         </div>
+      </template>
+
+      <template v-else-if="runeSheet">
+        <header class="head">
+          <div class="name">Rune prices</div>
+          <div class="rune-league">{{ runeSheet.league }} · poe.ninja</div>
+        </header>
+        <input
+          v-model="runeFilter"
+          class="rune-filter"
+          type="text"
+          placeholder="Filter runes… (e.g. craiceann)"
+        />
+        <ul v-if="filteredRunes.length" class="listings">
+          <li v-for="e in filteredRunes" :key="e.name" class="listing">
+            <span class="rune-name">{{ e.name }}</span>
+            <span class="price">{{ e.display }}</span>
+          </li>
+        </ul>
+        <div v-else-if="runeSheet.entries.length" class="status">No rune matches the filter.</div>
+        <div v-else class="status err">poe.ninja unreachable — press Ctrl+Alt+F to retry.</div>
       </template>
 
       <div v-else-if="!itemName" class="hint">
@@ -598,6 +662,36 @@ body,
 
 .status.err {
   color: #ff9d9d;
+}
+
+/* --- rune price sheet (T9) --- */
+.rune-league {
+  font-size: 12px;
+  font-weight: 600;
+  color: #8aa0bf;
+}
+
+.rune-filter {
+  padding: 7px 11px;
+  border-radius: 7px;
+  border: 1px solid rgba(130, 190, 255, 0.6);
+  background: #161b29;
+  color: #e8eefb;
+  font: 600 14px/1.4 Inter, system-ui, sans-serif;
+}
+
+.rune-filter::placeholder {
+  color: #7e8aa0;
+  font-weight: 400;
+}
+
+.rune-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e6edf8;
 }
 
 .spread {

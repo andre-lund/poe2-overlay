@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::async_runtime::Mutex as AsyncMutex;
 
+pub use ninja::RuneEntry;
 pub use parse::parse_item;
 
 /// Offline fallback league, used only when the live league list can't be fetched.
@@ -169,6 +170,15 @@ impl PriceResult {
             leagues,
         }
     }
+}
+
+/// The rune price sheet payload (T9) — poe.ninja Runes overview for the active
+/// league, rendered by the overlay's rune panel (Ctrl+Alt+F).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuneSheet {
+    pub league: String,
+    pub entries: Vec<RuneEntry>,
 }
 
 /// Display name for the result header: rares show `Name (Base Type)`.
@@ -482,6 +492,20 @@ impl Pricing {
         }
 
         gear::price_gear(&self.client, &league, item, &snapshot, &self.rate).await
+    }
+
+    /// The rune price sheet (T9): every rune poe.ninja tracks for the active league,
+    /// most valuable first. Zero GGG quota, so no lockout gate. Empty entries =
+    /// poe.ninja unreachable (the overlay renders a retry hint).
+    pub async fn rune_sheet(&self) -> RuneSheet {
+        let snapshot = self.ensure_caches().await;
+        let entries = ninja::fetch_rune_sheet(&self.client, &snapshot.league, &snapshot.rates)
+            .await
+            .unwrap_or_default();
+        RuneSheet {
+            league: snapshot.league,
+            entries,
+        }
     }
 
     /// Re-price the last-checked item with user-edited filters and/or a new league (the

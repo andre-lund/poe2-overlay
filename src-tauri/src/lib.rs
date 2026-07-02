@@ -14,7 +14,7 @@ mod hotkey;
 mod overlay;
 mod trade;
 
-use tauri::{Manager, State, WebviewWindow};
+use tauri::{Emitter, Manager, State, WebviewWindow};
 
 /// Hide the overlay surface. The card's ✕ control (and Esc) invoke this; the price
 /// check shows it again on the next Ctrl+Alt+D.
@@ -40,6 +40,13 @@ async fn requery(
 #[tauri::command]
 fn get_cheatsheet() -> cheatsheet::Cheatsheet {
     cheatsheet::cheatsheet()
+}
+
+/// The rune price sheet for the overlay panel (T9): poe.ninja rune prices for the
+/// active league. Async — one poe.ninja round-trip (zero GGG quota).
+#[tauri::command]
+async fn get_rune_sheet(pricing: State<'_, trade::Pricing>) -> Result<trade::RuneSheet, ()> {
+    Ok(pricing.rune_sheet().await)
 }
 
 /// Write a cheat-sheet pattern to the X11 clipboard so the user can paste it into the
@@ -68,17 +75,29 @@ pub fn run() {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
                 }
+            } else if argv.iter().any(|a| a == "--runes") {
+                // Rune price sheet (T9): not item-driven — the game offers no clipboard
+                // copy on reward tooltips, so this is opened deliberately at a reward
+                // panel via Ctrl+Alt+F (the binding freed by the dormant regex sheet).
+                // Switch the overlay to the rune panel and show it.
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.emit("show-runes", ());
+                    if !w.is_visible().unwrap_or(false) {
+                        let _ = w.show();
+                    }
+                }
             }
-            // The `--regex` cheat-sheet trigger (T8, ADR-0006) is disabled for now: the
-            // Ctrl+Alt+F entry point is removed (installer no longer registers it). The
-            // backend command + Vue panel are retained, dormant, for an easy restore —
-            // re-add the `--regex` branch here and the installer shortcut to re-enable.
+            // The `--regex` cheat-sheet trigger (T8, ADR-0006) stays disabled: its
+            // Ctrl+Alt+F binding now opens the rune sheet. The backend command + Vue
+            // panel are retained, dormant, for an easy restore — re-add a `--regex`
+            // branch here and an installer shortcut to re-enable.
         }))
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             hide_overlay,
             requery,
             get_cheatsheet,
+            get_rune_sheet,
             copy_to_clipboard
         ])
         .setup(|app| {

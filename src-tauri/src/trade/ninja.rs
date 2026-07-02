@@ -212,10 +212,8 @@ pub async fn price_bulk(
         "1 E".to_string()
     } else if ninja_id == "divine" {
         "1 D".to_string()
-    } else if exalt_val >= divine {
-        format!("{} D", round2(exalt_val / divine))
     } else {
-        format!("{} E", round2(exalt_val))
+        display_value(exalt_val, divine)
     };
 
     Some(Listing {
@@ -223,4 +221,95 @@ pub async fn price_bulk(
         exalt_val,
         age: "poe.ninja avg".to_string(),
     })
+}
+
+/// Exalt-or-divine price display shared by bulk pricing and the rune sheet.
+fn display_value(exalt_val: f64, divine: f64) -> String {
+    if exalt_val >= divine {
+        format!("{} D", round2(exalt_val / divine))
+    } else {
+        format!("{} E", round2(exalt_val))
+    }
+}
+
+/// One rune on the price sheet (T9). `name` is derived from the poe.ninja id —
+/// the API returns null names — so apostrophes are lost ("Craiceanns", not
+/// "Craiceann's"); good enough to eyeball against an in-game reward tooltip.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuneEntry {
+    pub name: String,
+    pub display: String,
+    pub exalt_val: f64,
+}
+
+/// Fetch the poe.ninja Runes overview for the rune price sheet, most valuable first.
+/// Per-category `primaryValue` is already exalt-denominated (same as `price_bulk`'s
+/// probe). Best-effort: `None` on any failure — the sheet renders a retry hint.
+pub async fn fetch_rune_sheet(
+    client: &reqwest::Client,
+    league: &str,
+    rates: &HashMap<String, f64>,
+) -> Option<Vec<RuneEntry>> {
+    let resp = client
+        .get(overview_url())
+        .query(&[("league", league), ("type", "Runes")])
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: Overview = resp.json().await.ok()?;
+    let divine = rates.get("divine").copied().unwrap_or(193.0);
+
+    let mut entries: Vec<RuneEntry> = body
+        .lines
+        .iter()
+        .filter_map(|l| {
+            let v = l.primary_value.filter(|v| *v > 0.0)?;
+            Some(RuneEntry {
+                name: name_from_id(&l.id),
+                display: display_value(v, divine),
+                exalt_val: v,
+            })
+        })
+        .collect();
+    entries.sort_by(|a, b| b.exalt_val.total_cmp(&a.exalt_val));
+    (!entries.is_empty()).then_some(entries)
+}
+
+/// Human name from a poe.ninja dash-id: `craiceanns-rune-of-recovery` →
+/// `Craiceanns Rune of Recovery` (connectives stay lowercase).
+fn name_from_id(id: &str) -> String {
+    id.split('-')
+        .enumerate()
+        .map(|(i, w)| {
+            if i > 0 && matches!(w, "of" | "the" | "and") {
+                w.to_string()
+            } else {
+                let mut c = w.chars();
+                match c.next() {
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    None => String::new(),
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn name_from_id_title_cases_with_lowercase_connectives() {
+        assert_eq!(
+            name_from_id("craiceanns-rune-of-recovery"),
+            "Craiceanns Rune of Recovery"
+        );
+        assert_eq!(name_from_id("adept-rune"), "Adept Rune");
+        assert_eq!(name_from_id("of-the-x"), "Of the X"); // leading connective still capitalized
+    }
 }

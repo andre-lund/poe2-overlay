@@ -44,15 +44,18 @@ entry, and registers the KWin shortcuts:
 | binary | `~/.local/bin/poe2-overlay` | the app (warm instance + flag forwarders) |
 | `poe2-overlay-pricecheck.desktop` | `~/.local/share/applications/` | `Exec=… --price-check` |
 | `poe2-overlay-hide.desktop` | `~/.local/share/applications/` | `Exec=… --hide` (panic dismiss) |
+| `poe2-overlay-runes.desktop` | `~/.local/share/applications/` | `Exec=… --runes` (rune price sheet) |
 | `poe2-overlay.desktop` | `~/.config/autostart/` | starts the **warm** instance on login |
-| `_launch` shortcuts | `kglobalshortcutsrc` | `Ctrl+Alt+D` price-check · `Ctrl+Alt+X` hide |
+| `_launch` shortcuts | `kglobalshortcutsrc` | `Ctrl+Alt+D` price-check · `Ctrl+Alt+X` hide · `Ctrl+Alt+F` rune sheet |
 
-Override the keys: `POE2_PRICECHECK_KEY="Meta+D" POE2_HIDE_KEY="Meta+X" ./packaging/install.sh`
-(KDE shortcut syntax), or change them later in System Settings → Keyboard → Shortcuts.
+Override the keys: `POE2_PRICECHECK_KEY="Meta+D" POE2_HIDE_KEY="Meta+X" POE2_RUNES_KEY="Meta+F"
+./packaging/install.sh` (KDE shortcut syntax), or change them later in System Settings →
+Keyboard → Shortcuts.
 
-> The regex cheat-sheet (T8, `Ctrl+Alt+F`) is **disabled for now** — the installer no longer
-> registers it and removes a prior install's shortcut on re-run. The backend + Vue panel are
-> retained, dormant, for an easy restore (ADR-0006).
+> The regex cheat-sheet (T8) is **disabled for now**; its old `Ctrl+Alt+F` key now opens the
+> rune price sheet (T9) — poe.ninja rune prices for the active league, for reward panels the
+> game offers no clipboard copy on. The regex backend + Vue panel are retained, dormant, for
+> an easy restore (ADR-0006).
 
 **Why autostart matters (ADR-0002):** the KDE shortcuts launch `poe2-overlay --price-check`,
 and `tauri-plugin-single-instance` forwards that flag to the *already-running* instance.
