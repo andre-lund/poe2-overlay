@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Wayland-native Path of Exile 2 trade overlay for KDE Plasma"
 authors = ["André Lund <olund.dev@pm.me>"]
 edition = "2021"
+license = "GPL-3.0-or-later"
 
 [lib]
 # `_lib` suffix keeps the lib name distinct from the bin (Windows quirk, see

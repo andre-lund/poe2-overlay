@@ -48,3 +48,16 @@ in **`docs/INSTALL.md`**.
 npm install
 npm run tauri:dev   # or: npm run tauri dev
 ```
+
+## License & attribution
+
+**GPL-3.0-or-later** (see `LICENSE`). The pricing core reimplements techniques from
+[PathofTrading](https://github.com/brendancohan/PathofTrading) by brendancohan
+(GPLv3) — studied as the validated reference on this exact stack and translated to
+Rust, so this project carries the GPL lineage forward. The reference itself is
+vendored unmodified (license and headers intact) under `eval-pathoftrading/` for
+provenance. ExileWatch and other overlays were studied as *behavioral* references
+only (see ADR-0001); no code from them is included.
+
+Not affiliated with Grinding Gear Games. The overlay uses the public trade2 API and
+poe.ninja, and self-throttles against GGG's `X-Rate-Limit` headers (ADR-0004).
