@@ -19,6 +19,9 @@ src-tauri/gen/schemas
 # Local reference clone of PathofTrading (kept locally, not part of this repo)
 eval-pathoftrading/
 
+# Browser-automation session artifacts
+.playwright-mcp/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
