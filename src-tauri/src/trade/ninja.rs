@@ -232,28 +232,92 @@ fn display_value(exalt_val: f64, divine: f64) -> String {
     }
 }
 
-/// One rune on the price sheet (T9). `name` is derived from the poe.ninja id —
-/// the API returns null names — so apostrophes are lost ("Craiceanns", not
-/// "Craiceann's"); good enough to eyeball against an in-game reward tooltip.
+/// One entry on the category price sheet (T9). `name` is derived from the poe.ninja
+/// id — the API returns null names — so apostrophes are lost ("Craiceanns", not
+/// "Craiceann's"); good enough to eyeball against an in-game tooltip.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuneEntry {
+pub struct SheetEntry {
     pub name: String,
     pub display: String,
     pub exalt_val: f64,
 }
 
-/// Fetch the poe.ninja Runes overview for the rune price sheet, most valuable first.
+/// Where a sheet category's data comes from: the currency exchange overview (bulk
+/// stackables) or the stash item overview (unique equipment, tablets).
+#[derive(Clone, Copy, PartialEq)]
+pub enum SheetSource {
+    Exchange,
+    Items,
+}
+
+/// One group of price-sheet categories, sharing a poe.ninja endpoint.
+pub struct SheetGroup {
+    pub name: &'static str,
+    pub source: SheetSource,
+    /// (UI label, poe.ninja overview type). Labels are globally unique.
+    pub categories: &'static [(&'static str, &'static str)],
+}
+
+/// The price-sheet catalogue. First group's first category is the default panel on
+/// Ctrl+Alt+F. General mirrors the overview types `types_to_check` probes for
+/// single-item bulk pricing (Abyssal Bones live under "Abyss"); Equipment and Atlas
+/// come from the item overview instead.
+pub const SHEET_GROUPS: &[SheetGroup] = &[
+    SheetGroup {
+        name: "General",
+        source: SheetSource::Exchange,
+        categories: &[
+            ("Runes", "Runes"),
+            ("Currency", "Currency"),
+            ("Fragments", "Fragments"),
+            ("Essences", "Essences"),
+            ("Omens", "Ritual"),
+            ("Soul Cores", "SoulCores"),
+            ("Abyss", "Abyss"),
+            ("Breach", "Breach"),
+            ("Delirium", "Delirium"),
+            ("Expedition", "Expedition"),
+            ("Idols", "Idols"),
+            ("Uncut Gems", "UncutGems"),
+            ("Lineage Gems", "LineageSupportGems"),
+        ],
+    },
+    SheetGroup {
+        name: "Equipment",
+        source: SheetSource::Items,
+        categories: &[
+            ("Unique Weapons", "UniqueWeapons"),
+            ("Unique Armours", "UniqueArmours"),
+            ("Unique Accessories", "UniqueAccessories"),
+            ("Unique Jewels", "UniqueJewels"),
+            ("Unique Flasks", "UniqueFlasks"),
+        ],
+    },
+    SheetGroup {
+        name: "Atlas",
+        source: SheetSource::Items,
+        categories: &[
+            ("Precursor Tablets", "PrecursorTablets"),
+            ("Unique Tablets", "UniqueTablets"),
+        ],
+    },
+];
+
+/// Fetch one poe.ninja category overview for the price sheet, most valuable first.
 /// Per-category `primaryValue` is already exalt-denominated (same as `price_bulk`'s
-/// probe). Best-effort: `None` on any failure — the sheet renders a retry hint.
-pub async fn fetch_rune_sheet(
+/// probe) — except `Currency`, which is denominated against exalted's own value (same
+/// as `fetch_exchange_rates`) and is normalized here. Best-effort: `None` on any
+/// failure — the sheet renders a retry hint.
+pub async fn fetch_price_sheet(
     client: &reqwest::Client,
     league: &str,
     rates: &HashMap<String, f64>,
-) -> Option<Vec<RuneEntry>> {
+    ninja_type: &str,
+) -> Option<Vec<SheetEntry>> {
     let resp = client
         .get(overview_url())
-        .query(&[("league", league), ("type", "Runes")])
+        .query(&[("league", league), ("type", ninja_type)])
         .send()
         .await
         .ok()?;
@@ -263,13 +327,23 @@ pub async fn fetch_rune_sheet(
     let body: Overview = resp.json().await.ok()?;
     let divine = rates.get("divine").copied().unwrap_or(193.0);
 
-    let mut entries: Vec<RuneEntry> = body
+    let scale = if ninja_type == "Currency" {
+        body.lines
+            .iter()
+            .find(|l| l.id == "exalted")
+            .and_then(|l| l.primary_value)
+            .filter(|v| *v > 0.0)?
+    } else {
+        1.0
+    };
+
+    let mut entries: Vec<SheetEntry> = body
         .lines
         .iter()
         .filter_map(|l| {
-            let v = l.primary_value.filter(|v| *v > 0.0)?;
-            Some(RuneEntry {
-                name: name_from_id(&l.id),
+            let v = l.primary_value.filter(|v| *v > 0.0)? / scale;
+            Some(SheetEntry {
+                name: sheet_name(&l.id),
                 display: display_value(v, divine),
                 exalt_val: v,
             })
@@ -277,6 +351,117 @@ pub async fn fetch_rune_sheet(
         .collect();
     entries.sort_by(|a, b| b.exalt_val.total_cmp(&a.exalt_val));
     (!entries.is_empty()).then_some(entries)
+}
+
+fn item_overview_url() -> &'static str {
+    "https://poe.ninja/poe2/api/economy/stash/current/item/overview"
+}
+
+#[derive(Deserialize)]
+struct ItemOverview {
+    #[serde(default)]
+    core: ItemCore,
+    #[serde(default)]
+    lines: Vec<ItemLine>,
+}
+
+#[derive(Deserialize, Default)]
+struct ItemCore {
+    #[serde(default)]
+    rates: HashMap<String, f64>,
+}
+
+#[derive(Deserialize)]
+struct ItemLine {
+    #[serde(default)]
+    name: String,
+    #[serde(default, rename = "baseType")]
+    base_type: String,
+    #[serde(default, rename = "detailsId")]
+    details_id: String,
+    #[serde(default)]
+    corrupted: bool,
+    #[serde(default, rename = "primaryValue")]
+    primary_value: Option<f64>,
+}
+
+/// Fetch a poe.ninja *item* overview (unique equipment, tablets) for the price sheet,
+/// most valuable first. Unlike the per-category exchange overviews, `primaryValue`
+/// here is denominated in the league's primary display currency (divine today) —
+/// `core.rates.exalted` (exalts per primary unit) converts to exalt-equivalents, with
+/// our cached divine rate as the fallback. Best-effort: `None` on any failure.
+pub async fn fetch_item_sheet(
+    client: &reqwest::Client,
+    league: &str,
+    rates: &HashMap<String, f64>,
+    ninja_type: &str,
+) -> Option<Vec<SheetEntry>> {
+    let resp = client
+        .get(item_overview_url())
+        .query(&[("league", league), ("type", ninja_type)])
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: ItemOverview = resp.json().await.ok()?;
+    let divine = rates.get("divine").copied().unwrap_or(193.0);
+    let per_primary = body
+        .core
+        .rates
+        .get("exalted")
+        .copied()
+        .filter(|v| *v > 0.0)
+        .unwrap_or(divine);
+
+    let mut entries: Vec<SheetEntry> = body
+        .lines
+        .iter()
+        .filter_map(|l| {
+            let v = l.primary_value.filter(|v| *v > 0.0)? * per_primary;
+            Some(SheetEntry {
+                name: item_entry_name(l),
+                display: display_value(v, divine),
+                exalt_val: v,
+            })
+        })
+        .collect();
+    entries.sort_by(|a, b| b.exalt_val.total_cmp(&a.exalt_val));
+    (!entries.is_empty()).then_some(entries)
+}
+
+/// Row label for an item-overview line. poe.ninja splits an item into one line per
+/// variant, so the label carries what distinguishes them: the base type when it
+/// differs from the name (a unique on two bases), the rarity suffix from `detailsId`
+/// (tablets get one line per normal/magic/rare — normal stays unmarked), and the
+/// corruption flag.
+fn item_entry_name(l: &ItemLine) -> String {
+    let mut name = if !l.base_type.is_empty() && l.base_type != l.name {
+        format!("{} ({})", l.name, l.base_type)
+    } else {
+        l.name.clone()
+    };
+    for rarity in ["magic", "rare"] {
+        if l.details_id.ends_with(&format!("-{rarity}")) {
+            name.push_str(&format!(" [{rarity}]"));
+        }
+    }
+    if l.corrupted {
+        name.push_str(" [corrupted]");
+    }
+    name
+}
+
+/// Entry name for a poe.ninja id: the Currency overview keys high-value orbs by short
+/// aliases (`divine`, `alch`), so the reverse of `CURRENCY_MAP` restores the real
+/// name; everything else title-cases the dash-id.
+fn sheet_name(id: &str) -> String {
+    CURRENCY_MAP
+        .iter()
+        .find(|(_, ninja_id)| *ninja_id == id)
+        .map(|(name, _)| name.to_string())
+        .unwrap_or_else(|| name_from_id(id))
 }
 
 /// Human name from a poe.ninja dash-id: `craiceanns-rune-of-recovery` →
@@ -311,5 +496,50 @@ mod tests {
         );
         assert_eq!(name_from_id("adept-rune"), "Adept Rune");
         assert_eq!(name_from_id("of-the-x"), "Of the X"); // leading connective still capitalized
+    }
+
+    #[test]
+    fn item_entry_name_tags_variants() {
+        let line = |name: &str, base: &str, details: &str, corrupted: bool| ItemLine {
+            name: name.into(),
+            base_type: base.into(),
+            details_id: details.into(),
+            corrupted,
+            primary_value: Some(1.0),
+        };
+        // unique on a base: base type shown
+        assert_eq!(
+            item_entry_name(&line("Bluetongue", "Shortsword", "bluetongue-shortsword", false)),
+            "Bluetongue (Shortsword)"
+        );
+        // tablet rarity variants: normal unmarked, magic/rare tagged
+        assert_eq!(
+            item_entry_name(&line(
+                "Ritual Tablet",
+                "Ritual Tablet",
+                "ritual-tablet-ritual-tablet-normal",
+                false
+            )),
+            "Ritual Tablet"
+        );
+        assert_eq!(
+            item_entry_name(&line(
+                "Ritual Tablet",
+                "Ritual Tablet",
+                "ritual-tablet-ritual-tablet-rare",
+                false
+            )),
+            "Ritual Tablet [rare]"
+        );
+        assert_eq!(
+            item_entry_name(&line("X", "X", "x-x-magic", true)),
+            "X [magic] [corrupted]"
+        );
+    }
+
+    #[test]
+    fn sheet_name_restores_currency_aliases() {
+        assert_eq!(sheet_name("divine"), "Divine Orb"); // short alias → CURRENCY_MAP reverse
+        assert_eq!(sheet_name("adept-rune"), "Adept Rune"); // non-currency → dash-id title case
     }
 }

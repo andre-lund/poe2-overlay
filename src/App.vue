@@ -65,14 +65,20 @@ interface Cheatsheet {
   categories: Category[];
   charLimit: number;
 }
-interface RuneEntry {
+interface SheetEntry {
   name: string;
   display: string;
   exaltVal: number;
 }
-interface RuneSheet {
+interface SheetGroup {
+  name: string;
+  categories: string[];
+}
+interface PriceSheet {
   league: string;
-  entries: RuneEntry[];
+  category: string;
+  groups: SheetGroup[];
+  entries: SheetEntry[];
 }
 
 const itemName = ref("");
@@ -81,8 +87,10 @@ const busy = ref(false); // requery in flight
 const result = ref<PriceResult | null>(null);
 const danger = ref<DangerReport | null>(null); // set for waystones (T7), instead of a price
 const cheatsheet = ref<Cheatsheet | null>(null); // set in regex mode (T8), not item-driven
-const runeSheet = ref<RuneSheet | null>(null); // set in rune-sheet mode (T9), not item-driven
-const runeFilter = ref(""); // rune sheet name filter
+const priceSheet = ref<PriceSheet | null>(null); // set in price-sheet mode (T9), not item-driven
+const sheetFilter = ref(""); // price sheet name filter
+const sheetBusy = ref(false); // category switch in flight
+const catsOpen = ref(true); // category tabs expanded (collapsible to save card space)
 const copiedRegex = ref(""); // the pattern just copied, for the "Copied" flash
 const stats = ref<ParsedStat[]>([]);
 const baseProps = ref<BaseProp[]>([]);
@@ -109,20 +117,51 @@ const spread = computed(() => {
     : `${range} · ${r.listings.length} matches`;
 });
 
-// Rune-name matching ignores case and apostrophes: poe.ninja ids lose the apostrophe
+// Sheet-name matching ignores case and apostrophes: poe.ninja ids lose the apostrophe
 // ("Craiceanns"), so a user typing the in-game "Craiceann's" must still hit.
-const filteredRunes = computed(() => {
-  const sheet = runeSheet.value;
+const filteredEntries = computed(() => {
+  const sheet = priceSheet.value;
   if (!sheet) return [];
-  const q = runeFilter.value.toLowerCase().replace(/'/g, "").trim();
+  const q = sheetFilter.value.toLowerCase().replace(/'/g, "").trim();
   if (!q) return sheet.entries;
   return sheet.entries.filter((e) => e.name.toLowerCase().replace(/'/g, "").includes(q));
 });
 
+// The group whose category chips are shown: the one containing the active category.
+const activeGroup = computed(() => {
+  const sheet = priceSheet.value;
+  if (!sheet) return null;
+  return sheet.groups.find((g) => g.categories.includes(sheet.category)) ?? sheet.groups[0];
+});
+
+// Clicking a group tab jumps to that group's first category.
+function switchGroup(g: SheetGroup) {
+  if (g.name === activeGroup.value?.name) return;
+  switchCategory(g.categories[0]);
+}
+
+// Switch the sheet to another poe.ninja category (one round-trip). The current
+// entries stay visible, dimmed, until the new sheet lands — same anti-flash idea
+// as the panel-open listeners.
+async function switchCategory(category: string) {
+  const sheet = priceSheet.value;
+  if (sheetBusy.value || !sheet || category === sheet.category) return;
+  sheetBusy.value = true;
+  try {
+    const next = await invoke<PriceSheet>("get_price_sheet", { category });
+    sheetFilter.value = "";
+    priceSheet.value = next;
+  } catch (e) {
+    console.error("price sheet fetch failed", e);
+  } finally {
+    sheetBusy.value = false;
+  }
+}
+
 function applyResult(r: PriceResult) {
   danger.value = null; // a price result replaces any prior waystone danger panel
   cheatsheet.value = null;
-  runeSheet.value = null;
+  priceSheet.value = null;
   result.value = r;
   itemName.value = r.item;
   // Echoed filters carry the toggle state forward, so editing persists across requeries.
@@ -207,7 +246,7 @@ onMounted(async () => {
       result.value = null;
       danger.value = null;
       cheatsheet.value = null;
-      runeSheet.value = null;
+      priceSheet.value = null;
       stats.value = [];
       baseProps.value = [];
       loading.value = true;
@@ -224,7 +263,7 @@ onMounted(async () => {
       itemName.value = e.payload.item;
       result.value = null;
       cheatsheet.value = null;
-      runeSheet.value = null;
+      priceSheet.value = null;
       loading.value = false;
       busy.value = false; // no price result follows a danger check — reset the requery flag here
       stats.value = [];
@@ -247,17 +286,19 @@ onMounted(async () => {
       stats.value = [];
       baseProps.value = [];
       copiedRegex.value = "";
-      runeSheet.value = null;
+      priceSheet.value = null;
       cheatsheet.value = sheet;
     }),
   );
   unlisten.push(
     await listen("show-runes", async () => {
-      reqGen.value++; // opening the rune sheet abandons any in-flight requery
+      reqGen.value++; // opening the price sheet abandons any in-flight requery
       busy.value = false;
       // Same anti-flash pattern as show-regex: fetch first (one poe.ninja round-trip),
       // then swap panels atomically so the prior card holds until the sheet is ready.
-      const sheet = await invoke<RuneSheet>("get_rune_sheet");
+      // Reopening always lands on the default category (Runes) — the backend maps ""
+      // to it — so the hotkey's behavior is predictable regardless of the last tab.
+      const sheet = await invoke<PriceSheet>("get_price_sheet", { category: "" });
       loading.value = false;
       result.value = null;
       danger.value = null;
@@ -265,8 +306,9 @@ onMounted(async () => {
       stats.value = [];
       baseProps.value = [];
       cheatsheet.value = null;
-      runeFilter.value = "";
-      runeSheet.value = sheet;
+      sheetFilter.value = "";
+      sheetBusy.value = false;
+      priceSheet.value = sheet;
     }),
   );
 });
@@ -307,25 +349,58 @@ onUnmounted(() => {
         </div>
       </template>
 
-      <template v-else-if="runeSheet">
+      <template v-else-if="priceSheet">
         <header class="head">
-          <div class="name">Rune prices</div>
-          <div class="rune-league">{{ runeSheet.league }} · poe.ninja</div>
+          <div class="name">{{ priceSheet.category }} prices</div>
+          <div class="sheet-league">
+            {{ priceSheet.league }} · poe.ninja ·
+            <button class="sheet-toggle" @click="catsOpen = !catsOpen">
+              {{ catsOpen ? "▾ categories" : "▸ categories" }}
+            </button>
+          </div>
         </header>
+        <template v-if="catsOpen">
+          <div class="sheet-groups">
+            <button
+              v-for="g in priceSheet.groups"
+              :key="g.name"
+              class="sheet-group"
+              :class="{ active: g.name === activeGroup?.name }"
+              :disabled="sheetBusy"
+              @click="switchGroup(g)"
+            >
+              {{ g.name }}
+            </button>
+          </div>
+          <div class="sheet-cats">
+            <button
+              v-for="c in activeGroup?.categories ?? []"
+              :key="c"
+              class="sheet-cat"
+              :class="{ active: c === priceSheet.category }"
+              :disabled="sheetBusy"
+              @click="switchCategory(c)"
+            >
+              {{ c }}
+            </button>
+          </div>
+        </template>
         <input
-          v-model="runeFilter"
-          class="rune-filter"
+          v-model="sheetFilter"
+          class="sheet-filter"
           type="text"
-          placeholder="Filter runes… (e.g. craiceann)"
+          placeholder="Filter by name… (e.g. craiceann)"
         />
-        <ul v-if="filteredRunes.length" class="listings">
-          <li v-for="e in filteredRunes" :key="e.name" class="listing">
-            <span class="rune-name">{{ e.name }}</span>
+        <ul v-if="filteredEntries.length" class="listings" :class="{ stale: sheetBusy }">
+          <li v-for="e in filteredEntries" :key="e.name" class="listing">
+            <span class="sheet-name">{{ e.name }}</span>
             <span class="price">{{ e.display }}</span>
           </li>
         </ul>
-        <div v-else-if="runeSheet.entries.length" class="status">No rune matches the filter.</div>
-        <div v-else class="status err">poe.ninja unreachable — press Ctrl+Alt+F to retry.</div>
+        <div v-else-if="priceSheet.entries.length" class="status">Nothing matches the filter.</div>
+        <div v-else class="status err">
+          poe.ninja unreachable — pick another category or press Ctrl+Alt+F to retry.
+        </div>
       </template>
 
       <div v-else-if="!itemName" class="hint">
@@ -664,14 +739,90 @@ body,
   color: #ff9d9d;
 }
 
-/* --- rune price sheet (T9) --- */
-.rune-league {
+/* --- category price sheet (T9) --- */
+.sheet-league {
   font-size: 12px;
   font-weight: 600;
   color: #8aa0bf;
 }
 
-.rune-filter {
+.sheet-toggle {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #9fc4ff;
+  font: 600 12px/1.4 Inter, system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.sheet-toggle:hover {
+  color: #cfe3ff;
+}
+
+.sheet-groups {
+  display: flex;
+  gap: 3px;
+  border-bottom: 1px solid rgba(130, 190, 255, 0.18);
+}
+
+.sheet-group {
+  padding: 4px 12px 6px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: #8aa0bf;
+  font: 700 12px/1.4 Inter, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.sheet-group:hover:not(:disabled) {
+  color: #cfe3ff;
+}
+
+.sheet-group.active {
+  color: #f3d9a0;
+  border-bottom-color: #f3d9a0;
+}
+
+.sheet-group:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.sheet-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.sheet-cat {
+  padding: 4px 10px;
+  border: 1px solid rgba(130, 190, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(130, 190, 255, 0.08);
+  color: #cfe3ff;
+  font: 600 12px/1.4 Inter, system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.sheet-cat:hover:not(:disabled) {
+  background: rgba(130, 190, 255, 0.2);
+}
+
+.sheet-cat.active {
+  background: #3f7fe0;
+  border-color: #3f7fe0;
+  color: #ffffff;
+}
+
+.sheet-cat:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.sheet-filter {
   padding: 7px 11px;
   border-radius: 7px;
   border: 1px solid rgba(130, 190, 255, 0.6);
@@ -680,12 +831,12 @@ body,
   font: 600 14px/1.4 Inter, system-ui, sans-serif;
 }
 
-.rune-filter::placeholder {
+.sheet-filter::placeholder {
   color: #7e8aa0;
   font-weight: 400;
 }
 
-.rune-name {
+.sheet-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;

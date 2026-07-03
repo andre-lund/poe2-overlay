@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::async_runtime::Mutex as AsyncMutex;
 
-pub use ninja::RuneEntry;
+pub use ninja::SheetEntry;
 pub use parse::parse_item;
 
 /// Offline fallback league, used only when the live league list can't be fetched.
@@ -172,13 +172,24 @@ impl PriceResult {
     }
 }
 
-/// The rune price sheet payload (T9) — poe.ninja Runes overview for the active
-/// league, rendered by the overlay's rune panel (Ctrl+Alt+F).
+/// The category price sheet payload (T9) — one poe.ninja overview for the active
+/// league, rendered by the overlay's sheet panel (Ctrl+Alt+F). `groups` carries the
+/// full group→category catalogue so the UI's tabs stay Rust-owned.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuneSheet {
+pub struct PriceSheet {
     pub league: String,
-    pub entries: Vec<RuneEntry>,
+    pub category: String,
+    pub groups: Vec<SheetGroupInfo>,
+    pub entries: Vec<SheetEntry>,
+}
+
+/// One tab group on the sheet panel: a group name and its category labels.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SheetGroupInfo {
+    pub name: String,
+    pub categories: Vec<String>,
 }
 
 /// Display name for the result header: rares show `Name (Base Type)`.
@@ -494,16 +505,42 @@ impl Pricing {
         gear::price_gear(&self.client, &league, item, &snapshot, &self.rate).await
     }
 
-    /// The rune price sheet (T9): every rune poe.ninja tracks for the active league,
-    /// most valuable first. Zero GGG quota, so no lockout gate. Empty entries =
-    /// poe.ninja unreachable (the overlay renders a retry hint).
-    pub async fn rune_sheet(&self) -> RuneSheet {
+    /// The category price sheet (T9): everything poe.ninja tracks in one category for
+    /// the active league, most valuable first. Zero GGG quota, so no lockout gate.
+    /// Unknown labels fall back to the default category; empty entries = poe.ninja
+    /// unreachable (the overlay renders a retry hint).
+    pub async fn price_sheet(&self, category: &str) -> PriceSheet {
         let snapshot = self.ensure_caches().await;
-        let entries = ninja::fetch_rune_sheet(&self.client, &snapshot.league, &snapshot.rates)
-            .await
-            .unwrap_or_default();
-        RuneSheet {
+        let (group, (label, ninja_type)) = ninja::SHEET_GROUPS
+            .iter()
+            .find_map(|g| {
+                g.categories
+                    .iter()
+                    .find(|(l, _)| *l == category)
+                    .map(|c| (g, *c))
+            })
+            .unwrap_or((&ninja::SHEET_GROUPS[0], ninja::SHEET_GROUPS[0].categories[0]));
+        let entries = match group.source {
+            ninja::SheetSource::Exchange => {
+                ninja::fetch_price_sheet(&self.client, &snapshot.league, &snapshot.rates, ninja_type)
+                    .await
+            }
+            ninja::SheetSource::Items => {
+                ninja::fetch_item_sheet(&self.client, &snapshot.league, &snapshot.rates, ninja_type)
+                    .await
+            }
+        }
+        .unwrap_or_default();
+        PriceSheet {
             league: snapshot.league,
+            category: label.to_string(),
+            groups: ninja::SHEET_GROUPS
+                .iter()
+                .map(|g| SheetGroupInfo {
+                    name: g.name.to_string(),
+                    categories: g.categories.iter().map(|(l, _)| l.to_string()).collect(),
+                })
+                .collect(),
             entries,
         }
     }

@@ -42,11 +42,15 @@ fn get_cheatsheet() -> cheatsheet::Cheatsheet {
     cheatsheet::cheatsheet()
 }
 
-/// The rune price sheet for the overlay panel (T9): poe.ninja rune prices for the
-/// active league. Async — one poe.ninja round-trip (zero GGG quota).
+/// One category of the price sheet for the overlay panel (T9): poe.ninja prices for
+/// the active league. Async — one poe.ninja round-trip (zero GGG quota). Unknown
+/// categories fall back to the default (Runes).
 #[tauri::command]
-async fn get_rune_sheet(pricing: State<'_, trade::Pricing>) -> Result<trade::RuneSheet, ()> {
-    Ok(pricing.rune_sheet().await)
+async fn get_price_sheet(
+    pricing: State<'_, trade::Pricing>,
+    category: String,
+) -> Result<trade::PriceSheet, ()> {
+    Ok(pricing.price_sheet(&category).await)
 }
 
 /// Write a cheat-sheet pattern to the X11 clipboard so the user can paste it into the
@@ -76,10 +80,10 @@ pub fn run() {
                     let _ = w.hide();
                 }
             } else if argv.iter().any(|a| a == "--runes") {
-                // Rune price sheet (T9): not item-driven — the game offers no clipboard
-                // copy on reward tooltips, so this is opened deliberately at a reward
-                // panel via Ctrl+Alt+F (the binding freed by the dormant regex sheet).
-                // Switch the overlay to the rune panel and show it.
+                // Category price sheet (T9): not item-driven — the game offers no
+                // clipboard copy on reward tooltips, so this is opened deliberately via
+                // Ctrl+Alt+F (the binding freed by the dormant regex sheet). Opens on
+                // the default category (Runes); the panel's tabs switch categories.
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.emit("show-runes", ());
                     if !w.is_visible().unwrap_or(false) {
@@ -97,7 +101,7 @@ pub fn run() {
             hide_overlay,
             requery,
             get_cheatsheet,
-            get_rune_sheet,
+            get_price_sheet,
             copy_to_clipboard
         ])
         .setup(|app| {
