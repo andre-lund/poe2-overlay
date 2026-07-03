@@ -13,8 +13,24 @@ use super::{round2, Listing, ParsedItem};
 
 #[derive(Deserialize)]
 struct Overview {
+    /// `core.rates.exalted` = exalts per primary display unit (divine today) — the
+    /// same converter the item overview carries. `primaryValue` everywhere in this
+    /// API is denominated in that primary unit, NOT in exalts (the original T4
+    /// assumption — poe.ninja's primary was exalted then, divine now).
+    #[serde(default)]
+    core: OverviewCore,
     #[serde(default)]
     lines: Vec<Line>,
+    /// Item metadata keyed by id — the real names (with apostrophes) that `lines`
+    /// stopped carrying.
+    #[serde(default)]
+    items: Vec<OverviewItem>,
+}
+
+#[derive(Deserialize, Default)]
+struct OverviewCore {
+    #[serde(default)]
+    rates: HashMap<String, f64>,
 }
 
 #[derive(Deserialize)]
@@ -25,6 +41,27 @@ struct Line {
     name: String,
     #[serde(default, rename = "primaryValue")]
     primary_value: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct OverviewItem {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+}
+
+impl Overview {
+    /// Exalts per `primaryValue` unit, from the response's own converter; falls back
+    /// to the cached divine exchange rate (the primary unit is divine today).
+    fn exalts_per_primary(&self, rates: &HashMap<String, f64>) -> f64 {
+        self.core
+            .rates
+            .get("exalted")
+            .copied()
+            .filter(|v| *v > 0.0)
+            .unwrap_or_else(|| rates.get("divine").copied().unwrap_or(193.0))
+    }
 }
 
 fn overview_url() -> &'static str {
@@ -174,9 +211,9 @@ pub async fn price_bulk(
 
     let mut exalt_val = rates.get(&ninja_id).copied();
 
-    // Not in the Currency cache — probe the relevant category overview(s). Unlike the
-    // divine-based Currency overview (normalized in `fetch_exchange_rates`), per-category
-    // `primaryValue` is already exalt-denominated, so it is used directly.
+    // Not in the Currency cache — probe the relevant category overview(s). Like every
+    // overview in this API, per-category `primaryValue` is denominated in the primary
+    // display unit (divine today) and converts via the response's own exalted rate.
     if exalt_val.is_none() {
         'outer: for t in types_to_check(item) {
             let Ok(resp) = client
@@ -194,11 +231,11 @@ pub async fn price_bulk(
                 continue;
             };
             for line in &body.lines {
-                // poe.ninja returns null names today, so the id match is what hits;
-                // the name comparison is kept in case names are repopulated.
+                // poe.ninja returns null names in `lines` today, so the id match is
+                // what hits; the name comparison is kept in case names repopulate.
                 if line.id == ninja_id || line.name.to_lowercase() == name_lower {
                     if let Some(v) = line.primary_value {
-                        exalt_val = Some(v);
+                        exalt_val = Some(v * body.exalts_per_primary(rates));
                         break 'outer;
                     }
                 }
@@ -251,64 +288,64 @@ pub enum SheetSource {
     Items,
 }
 
-/// One group of price-sheet categories, sharing a poe.ninja endpoint.
+/// One price-sheet category: (UI label, poe.ninja overview type, endpoint). Labels
+/// are globally unique.
+pub type SheetCategory = (&'static str, &'static str, SheetSource);
+
+/// One group of price-sheet categories (a tab on the sheet panel).
 pub struct SheetGroup {
     pub name: &'static str,
-    pub source: SheetSource,
-    /// (UI label, poe.ninja overview type). Labels are globally unique.
-    pub categories: &'static [(&'static str, &'static str)],
+    pub categories: &'static [SheetCategory],
 }
 
 /// The price-sheet catalogue. First group's first category is the default panel on
-/// Ctrl+Alt+F. General mirrors the overview types `types_to_check` probes for
-/// single-item bulk pricing (Abyssal Bones live under "Abyss"); Equipment and Atlas
-/// come from the item overview instead.
+/// Ctrl+Alt+F. The Exchange categories mirror the overview types `types_to_check`
+/// probes for single-item bulk pricing (Abyssal Bones live under "Abyss"); the Items
+/// ones come from the item overview instead. Expedition sits under Atlas (logbooks,
+/// sagas, fluxes are atlas content) even though it is exchange-sourced.
 pub const SHEET_GROUPS: &[SheetGroup] = &[
     SheetGroup {
         name: "General",
-        source: SheetSource::Exchange,
         categories: &[
-            ("Runes", "Runes"),
-            ("Currency", "Currency"),
-            ("Fragments", "Fragments"),
-            ("Essences", "Essences"),
-            ("Omens", "Ritual"),
-            ("Soul Cores", "SoulCores"),
-            ("Abyss", "Abyss"),
-            ("Breach", "Breach"),
-            ("Delirium", "Delirium"),
-            ("Expedition", "Expedition"),
-            ("Idols", "Idols"),
-            ("Uncut Gems", "UncutGems"),
-            ("Lineage Gems", "LineageSupportGems"),
+            ("Runes", "Runes", SheetSource::Exchange),
+            ("Currency", "Currency", SheetSource::Exchange),
+            ("Fragments", "Fragments", SheetSource::Exchange),
+            ("Essences", "Essences", SheetSource::Exchange),
+            ("Omens", "Ritual", SheetSource::Exchange),
+            ("Soul Cores", "SoulCores", SheetSource::Exchange),
+            ("Abyss", "Abyss", SheetSource::Exchange),
+            ("Breach", "Breach", SheetSource::Exchange),
+            ("Delirium", "Delirium", SheetSource::Exchange),
+            ("Idols", "Idols", SheetSource::Exchange),
+            ("Uncut Gems", "UncutGems", SheetSource::Exchange),
+            ("Lineage Gems", "LineageSupportGems", SheetSource::Exchange),
         ],
     },
     SheetGroup {
         name: "Equipment",
-        source: SheetSource::Items,
         categories: &[
-            ("Unique Weapons", "UniqueWeapons"),
-            ("Unique Armours", "UniqueArmours"),
-            ("Unique Accessories", "UniqueAccessories"),
-            ("Unique Jewels", "UniqueJewels"),
-            ("Unique Flasks", "UniqueFlasks"),
+            ("Unique Weapons", "UniqueWeapons", SheetSource::Items),
+            ("Unique Armours", "UniqueArmours", SheetSource::Items),
+            ("Unique Accessories", "UniqueAccessories", SheetSource::Items),
+            ("Unique Jewels", "UniqueJewels", SheetSource::Items),
+            ("Unique Flasks", "UniqueFlasks", SheetSource::Items),
         ],
     },
     SheetGroup {
         name: "Atlas",
-        source: SheetSource::Items,
         categories: &[
-            ("Precursor Tablets", "PrecursorTablets"),
-            ("Unique Tablets", "UniqueTablets"),
+            ("Precursor Tablets", "PrecursorTablets", SheetSource::Items),
+            ("Unique Tablets", "UniqueTablets", SheetSource::Items),
+            ("Expedition", "Expedition", SheetSource::Exchange),
         ],
     },
 ];
 
-/// Fetch one poe.ninja category overview for the price sheet, most valuable first.
-/// Per-category `primaryValue` is already exalt-denominated (same as `price_bulk`'s
-/// probe) — except `Currency`, which is denominated against exalted's own value (same
-/// as `fetch_exchange_rates`) and is normalized here. Best-effort: `None` on any
-/// failure — the sheet renders a retry hint.
+/// Fetch one poe.ninja exchange category overview for the price sheet, most valuable
+/// first. `primaryValue` is divine-denominated (like everything in this API) and
+/// converts via the response's own exalted rate. Real names come from the response's
+/// `items` metadata, with the id-derived fallback. Best-effort: `None` on any failure
+/// — the sheet renders a retry hint.
 pub async fn fetch_price_sheet(
     client: &reqwest::Client,
     league: &str,
@@ -326,24 +363,24 @@ pub async fn fetch_price_sheet(
     }
     let body: Overview = resp.json().await.ok()?;
     let divine = rates.get("divine").copied().unwrap_or(193.0);
-
-    let scale = if ninja_type == "Currency" {
-        body.lines
-            .iter()
-            .find(|l| l.id == "exalted")
-            .and_then(|l| l.primary_value)
-            .filter(|v| *v > 0.0)?
-    } else {
-        1.0
-    };
+    let per_primary = body.exalts_per_primary(rates);
+    let names: HashMap<&str, &str> = body
+        .items
+        .iter()
+        .filter(|i| !i.name.is_empty())
+        .map(|i| (i.id.as_str(), i.name.as_str()))
+        .collect();
 
     let mut entries: Vec<SheetEntry> = body
         .lines
         .iter()
         .filter_map(|l| {
-            let v = l.primary_value.filter(|v| *v > 0.0)? / scale;
+            let v = l.primary_value.filter(|v| *v > 0.0)? * per_primary;
             Some(SheetEntry {
-                name: sheet_name(&l.id),
+                name: names
+                    .get(l.id.as_str())
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| sheet_name(&l.id)),
                 display: display_value(v, divine),
                 exalt_val: v,
             })
@@ -360,15 +397,9 @@ fn item_overview_url() -> &'static str {
 #[derive(Deserialize)]
 struct ItemOverview {
     #[serde(default)]
-    core: ItemCore,
+    core: OverviewCore,
     #[serde(default)]
     lines: Vec<ItemLine>,
-}
-
-#[derive(Deserialize, Default)]
-struct ItemCore {
-    #[serde(default)]
-    rates: HashMap<String, f64>,
 }
 
 #[derive(Deserialize)]
@@ -386,10 +417,9 @@ struct ItemLine {
 }
 
 /// Fetch a poe.ninja *item* overview (unique equipment, tablets) for the price sheet,
-/// most valuable first. Unlike the per-category exchange overviews, `primaryValue`
-/// here is denominated in the league's primary display currency (divine today) —
-/// `core.rates.exalted` (exalts per primary unit) converts to exalt-equivalents, with
-/// our cached divine rate as the fallback. Best-effort: `None` on any failure.
+/// most valuable first. Denominated like the exchange overviews: divine-based
+/// `primaryValue`, converted via `core.rates.exalted` with the cached divine rate as
+/// fallback. Best-effort: `None` on any failure.
 pub async fn fetch_item_sheet(
     client: &reqwest::Client,
     league: &str,

@@ -511,16 +511,12 @@ impl Pricing {
     /// unreachable (the overlay renders a retry hint).
     pub async fn price_sheet(&self, category: &str) -> PriceSheet {
         let snapshot = self.ensure_caches().await;
-        let (group, (label, ninja_type)) = ninja::SHEET_GROUPS
+        let (label, ninja_type, source) = ninja::SHEET_GROUPS
             .iter()
-            .find_map(|g| {
-                g.categories
-                    .iter()
-                    .find(|(l, _)| *l == category)
-                    .map(|c| (g, *c))
-            })
-            .unwrap_or((&ninja::SHEET_GROUPS[0], ninja::SHEET_GROUPS[0].categories[0]));
-        let entries = match group.source {
+            .find_map(|g| g.categories.iter().find(|(l, _, _)| *l == category))
+            .copied()
+            .unwrap_or(ninja::SHEET_GROUPS[0].categories[0]);
+        let entries = match source {
             ninja::SheetSource::Exchange => {
                 ninja::fetch_price_sheet(&self.client, &snapshot.league, &snapshot.rates, ninja_type)
                     .await
@@ -538,7 +534,7 @@ impl Pricing {
                 .iter()
                 .map(|g| SheetGroupInfo {
                     name: g.name.to_string(),
-                    categories: g.categories.iter().map(|(l, _)| l.to_string()).collect(),
+                    categories: g.categories.iter().map(|(l, _, _)| l.to_string()).collect(),
                 })
                 .collect(),
             entries,
