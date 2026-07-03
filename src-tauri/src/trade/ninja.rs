@@ -317,6 +317,13 @@ pub const SHEET_GROUPS: &[SheetGroup] = &[
             ("Breach", "Breach", SheetSource::Exchange),
             ("Delirium", "Delirium", SheetSource::Exchange),
             ("Idols", "Idols", SheetSource::Exchange),
+        ],
+    },
+    // poe.ninja tracks no PoE2 skill-gem market — uncut + lineage support gems are
+    // the whole gem economy it prices.
+    SheetGroup {
+        name: "Gems",
+        categories: &[
             ("Uncut Gems", "UncutGems", SheetSource::Exchange),
             ("Lineage Gems", "LineageSupportGems", SheetSource::Exchange),
         ],
