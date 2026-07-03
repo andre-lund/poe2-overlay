@@ -836,7 +836,7 @@ mod net_tests {
         let text = "Item Class: Body Armours\n\
             Rarity: Rare\n\
             Doom Shell\n\
-            Vaal Regalia\n\
+            Grand Regalia\n\
             --------\n\
             Energy Shield: 200\n\
             --------\n\
@@ -879,7 +879,7 @@ mod net_tests {
         let text = "Item Class: Body Armours\n\
             Rarity: Rare\n\
             Doom Shell\n\
-            Vaal Regalia\n\
+            Grand Regalia\n\
             --------\n\
             Item Level: 82\n\
             --------\n\
