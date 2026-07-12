@@ -22,9 +22,15 @@ tauri-plugin-single-instance = "2"  # T3: KDE Ctrl+Alt+D shortcut forwards `--pr
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# --- Overlay + input + trade foundation (see ADR-0001; wired in plan T2-T4) ---
-# Declared here as the architecture of record; uncomment per task. The
-# layer-shell + GTK deps need system libs: `pacman -S gtk-layer-shell gtk3`.
+# T4 pricing core (portable — every platform): warm async client for the GGG trade2
+# API + poe.ninja (ADR-0004). NOTE: these lived under the linux target table until
+# plan 0002 T1; they must stay platform-neutral for the Windows port.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+urlencoding = "2"                # percent-encode the league into the trade2 search path segment
+regex = "1"                      # item-text + stat-line parsing (level/quality/tier/value extraction)
+
+# --- Linux platform seams (ADR-0001/0002; Windows counterparts land in plan 0002) ---
+# The layer-shell + GTK deps need system libs: `pacman -S gtk-layer-shell gtk3`.
 #
 # T2: promote the GTK window to a wlr-layer-shell OVERLAY surface. Versions track
 # Tauri 2.11's gtk-rs generation (gtk/gdk 0.18); gtk-layer-shell 0.8 binds gtk 0.18.
@@ -37,8 +43,3 @@ gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 # via uinput and read the X11 clipboard. No /dev/input reads — only /dev/uinput.
 evdev = "0.12"                   # uinput virtual device (Ctrl+C synth); /dev/uinput ACL, no `input` group
 x11-clipboard = "0.9"            # read the X11 CLIPBOARD selection (XWayland/Proton writes there)
-
-# T4 pricing core: warm async client for the GGG trade2 API + poe.ninja (ADR-0004).
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-urlencoding = "2"                # percent-encode the league into the trade2 search path segment
-regex = "1"                      # item-text + stat-line parsing (level/quality/tier/value extraction)

@@ -9,9 +9,12 @@ fn main() {
     //   and the layer-shell promotion silently no-ops).
     // - WEBKIT_DISABLE_DMABUF_RENDERER=1 avoids a WebKitGTK crash on KDE Wayland.
     // Set before any GTK/WebKit init. The launcher/.desktop should also export
-    // these as a belt-and-suspenders.
-    std::env::set_var("GDK_BACKEND", "wayland");
-    std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    // these as a belt-and-suspenders. Linux-only: WebView2 on Windows needs neither.
+    #[cfg(target_os = "linux")]
+    {
+        std::env::set_var("GDK_BACKEND", "wayland");
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
 
     poe2_overlay_lib::run()
 }

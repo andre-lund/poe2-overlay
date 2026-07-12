@@ -78,8 +78,10 @@ pub fn init_layer_shell(window: &WebviewWindow) -> tauri::Result<()> {
     Ok(())
 }
 
-/// No-op off Linux — the overlay only targets KDE Plasma Wayland (ADR-0001), but
-/// keep the symbol so non-Linux builds compile.
+/// No-op off Linux: there is no layer-shell to promote to. The Windows overlay
+/// window (plan 0002 T2) comes from `tauri.conf.json` alone — transparent,
+/// undecorated, `alwaysOnTop`, fixed-size — so this seam stays a no-op there;
+/// only sizing/centering work would land here if T2 needs runtime adjustments.
 #[cfg(not(target_os = "linux"))]
 pub fn init_layer_shell(_window: &WebviewWindow) -> tauri::Result<()> {
     Ok(())

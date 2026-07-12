@@ -111,12 +111,13 @@ pub fn run() {
             // Promote to a layer-shell OVERLAY surface while still hidden. The
             // window stays hidden until a price check shows it; ✕/Esc hides it.
             overlay::init_layer_shell(&window)?;
-            // Build the uinput synth device once and keep it warm in state.
+            // Build the input-synth device once and keep it warm in state (Linux:
+            // uinput; other platforms stub until plan 0002 T3).
             match hotkey::build_synth() {
-                Ok(dev) => {
-                    app.manage(hotkey::Synth(std::sync::Mutex::new(dev)));
+                Ok(synth) => {
+                    app.manage(synth);
                 }
-                Err(e) => eprintln!("[hotkey] cannot open /dev/uinput ({e}); item copy disabled"),
+                Err(e) => eprintln!("[hotkey] input synth unavailable ({e}); item copy disabled"),
             }
             // Warm pricing client + caches kept in state across checks (T4, ADR-0004).
             app.manage(trade::Pricing::new());

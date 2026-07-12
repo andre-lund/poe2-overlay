@@ -1,0 +1,27 @@
+# Windows compile gate (plan 0002 T1). A pacman-Rust dev machine has no rustup, so
+# the MSVC cross-check can't run locally — this job is the T1 "stubs compile on
+# Windows" verification, and grows into the T4 release build later.
+name: windows-check
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The frontend build must exist before cargo: tauri's generate_context!
+      # embeds ../dist at compile time, even for a check.
+      - run: npm ci
+      - run: npm run build
+      - name: cargo check (windows stubs)
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+      - name: cargo test (portable core on Windows)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
