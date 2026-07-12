@@ -60,12 +60,26 @@ Gates resolved 2026-07-12 (user):
 
 ## Tasks
 
-- [ ] **T1** — Seam split: move the Linux implementations of `overlay.rs`,
+- [x] **T1** — Seam split: move the Linux implementations of `overlay.rs`,
   `hotkey.rs` (synth + clipboard read), and `clipboard.rs` behind
   `#[cfg(target_os = "linux")]` module fronts with a shared trait/function surface;
   stub Windows counterparts. Verify: Linux `cargo test` + `clippy` + in-game smoke
   unchanged; `cargo check --target x86_64-pc-windows-msvc` compiles the stubs.
   Promote mechanism decisions to ADR-0008 if warranted.
+  **Done (2026-07-12, commit b747192):** `hotkey.rs` keeps the shared `price_check`
+  flow and gains a per-OS `platform` module (Linux: uinput/ydotool synth +
+  `wl-paste`; non-Linux: stubs that disable item copy with one startup log line
+  until T3); `clipboard.rs` split the same way (X11 owner vs stub; `build` succeeds
+  so state/command wiring stays identical); `Synth` construction moved inside
+  `build_synth` so `lib.rs` is platform-neutral; `main.rs` env vars cfg-gated.
+  **Latent bug fixed:** reqwest/urlencoding/regex were buried in the
+  `[target.linux]` Cargo table — the portable pricing core would never have
+  compiled off-Linux. **Verification pivot (recorded in the Decision log):** no
+  rustup on the pacman-Rust dev machine, so the MSVC check runs in CI instead —
+  `.github/workflows/windows-check.yml` (windows-latest: npm build + `cargo check`
+  + `cargo test`), run 29187662062 green: stubs compile AND the portable core's 25
+  offline tests pass on Windows. Linux side unchanged (25 tests, clippy clean).
+  No ADR-0008 yet — no non-obvious mechanism decisions surfaced; revisit in T2/T3.
 - [ ] **T2** — Windows overlay window: transparent/undecorated/alwaysOnTop
   fixed-size centered window, hidden-until-triggered, show/hide parity with the
   layer-shell path. Verify: renders the themed card over borderless-fullscreen PoE2
@@ -92,3 +106,8 @@ Gates resolved 2026-07-12 (user):
   bare Ctrl+F rejected because the game binds it to stash/vendor search focus);
   distribution via GitHub Releases from an Actions windows runner. Plan is
   unblocked; T1 (seam split) can start.
+- 2026-07-12 — T1 verification pivot: the dev machine runs pacman Rust (no rustup),
+  so `cargo check --target x86_64-pc-windows-msvc` cannot run locally. The Windows
+  compile gate is a CI job instead (`.github/workflows/windows-check.yml`,
+  windows-latest), pulled forward from T4 — it also runs `cargo test`, so the
+  portable core's offline suite is proven on Windows, not just compiled.
