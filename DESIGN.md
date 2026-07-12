@@ -4,6 +4,10 @@ The overlay borrows PoE2's item-tooltip vocabulary so it reads as part of the ga
 not a desktop app (see PRODUCT.md). All tokens live as CSS custom properties on
 `.overlay-root` in `src/App.vue`.
 
+![The four card states over a mock game scene](docs/theme-preview.png)
+_(regenerate: rebuild, then screenshot the preview harness — a static page reusing the
+built scoped CSS with sample data for each state)_
+
 ## Theme
 
 Dark, warm, near-black glass with bronze/gold chrome. The panel sits over a bright
@@ -45,8 +49,16 @@ caution `#e8c98a`, dangerous `#ff9d5c`, deadly `#ff6b6b`. Error text `#ff8f7d`.
 - **Card frame**: 1px `--edge` border + `box-shadow: 0 0 0 1px #000` outer line +
   faint gilt inset — the tooltip double-edge idiom. Radius 3px everywhere (PoE UI is
   squared; no pills).
-- **Header**: centered item name in rarity color over a gilt gradient separator
-  (`.head::after`, fading at both ends like a tooltip rule).
+- **Header plate**: a full-bleed darker band (`#221a10 → #14100a`, negative margins
+  into the card padding) carrying the centered item name — PoE2's tooltip header
+  strip. Rare/unique names stack on two lines (name over base type, `.name-base`);
+  the frontend splits the backend's `"Name (Base Type)"`. Closed by a gilt separator
+  with a centered dot ornament (`.head::after`, layered radial + linear gradients).
+- **Mod text**: stat filter lines use the game's magic-mod blue (`#a8a8f8`,
+  lightened for small-size contrast); base properties stay parchment — mirroring how
+  a real tooltip separates mods from item fields.
+- **Severity badges**: colored text + matching translucent border on a dark plate
+  (the map-mod idiom), never a filled color pill.
 - **Buttons**: bronze-framed dark gradient (`#3a2f1a → #241c0f`), small-caps gold
   text; hover brightens the border and adds a faint gold glow. Same vocabulary for
   the requery button and active category chips.

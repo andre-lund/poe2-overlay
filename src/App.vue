@@ -145,6 +145,14 @@ const rarityClass = computed(() => {
   return map[r] ?? "";
 });
 
+// PoE2 tooltips stack a rare/unique name over its base type on two lines; the backend
+// sends "Name (Base Type)", so split it back apart for the header. Waystones split the
+// same way ("Dread Core (Waystone Tier 15)"), matching the game.
+const nameParts = computed(() => {
+  const m = itemName.value.match(/^(.*) \((.+)\)$/);
+  return m ? [m[1], m[2]] : [itemName.value];
+});
+
 // Price spread over the fetched (cheapest-first) listings plus the search's total match
 // count, so a wall of identical floor prices reads as "the floor of a big pool" instead
 // of the item's value.
@@ -465,16 +473,23 @@ onUnmounted(() => {
         </div>
       </template>
 
-      <div v-else-if="!itemName" class="hint">
-        <div class="hint-title">PoE2 Overlay</div>
-        <div class="hint-row"><kbd>Ctrl+Alt+D</kbd><span>price-check the hovered item</span></div>
-        <div class="hint-row"><kbd>Ctrl+Alt+F</kbd><span>open the price sheet</span></div>
-        <div class="hint-row"><kbd>Ctrl+Alt+X</kbd><span>hide the overlay</span></div>
-      </div>
+      <template v-else-if="!itemName">
+        <header class="head">
+          <div class="name">PoE2 Overlay</div>
+        </header>
+        <div class="hint">
+          <div class="hint-row"><kbd>Ctrl+Alt+D</kbd><span>price-check the hovered item</span></div>
+          <div class="hint-row"><kbd>Ctrl+Alt+F</kbd><span>open the price sheet</span></div>
+          <div class="hint-row"><kbd>Ctrl+Alt+X</kbd><span>hide the overlay</span></div>
+        </div>
+      </template>
 
       <template v-else-if="danger">
         <header class="head">
-          <div class="name">{{ itemName }}</div>
+          <div class="name">
+            <div>{{ nameParts[0] }}</div>
+            <div v-if="nameParts[1]" class="name-base">{{ nameParts[1] }}</div>
+          </div>
           <span class="level" :class="danger.level">{{ danger.level }}</span>
         </header>
         <ul v-if="danger.flags.length" class="flags">
@@ -492,7 +507,10 @@ onUnmounted(() => {
 
       <template v-else>
         <header class="head">
-          <div class="name" :class="rarityClass">{{ itemName || "Unrecognized item" }}</div>
+          <div class="name" :class="rarityClass">
+            <div>{{ nameParts[0] || "Unrecognized item" }}</div>
+            <div v-if="nameParts[1]" class="name-base">{{ nameParts[1] }}</div>
+          </div>
           <label v-if="leagues.length" class="league-field">
             <span class="field-label">League</span>
             <div class="select-wrap">
@@ -660,13 +678,6 @@ body,
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-right: 30px;
-}
-
-.hint-title {
-  font: 400 17px/1.3 var(--smallcaps);
-  letter-spacing: 0.04em;
-  color: var(--gold);
 }
 
 .hint-row {
@@ -688,19 +699,29 @@ body,
   white-space: nowrap;
 }
 
+/* Tooltip header plate: the full-bleed darker band PoE2 draws the item name on,
+   closed by a gilt separator with a center ornament. Bleeds into the card padding
+   (negative margins) so it reads as part of the frame, not a floating heading. */
 .head {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 0 26px;
+  margin: -14px -16px 0;
+  padding: 12px 34px 0;
+  border-radius: 2px 2px 0 0;
+  background: linear-gradient(180deg, #221a10, #14100a 88%);
 }
 
-/* Tooltip-style header: centered name with a gilt separator fading at the edges. */
 .head::after {
   content: "";
-  height: 1px;
-  margin-top: 1px;
-  background: linear-gradient(90deg, transparent, rgba(200, 170, 109, 0.55), transparent);
+  height: 8px;
+  margin: 3px -18px 0;
+  padding-bottom: 9px;
+  background:
+    radial-gradient(circle, var(--gold) 1.5px, rgba(200, 170, 109, 0) 2.5px) center top 4px /
+      9px 9px no-repeat,
+    linear-gradient(90deg, transparent, rgba(200, 170, 109, 0.5), transparent) center top 8px /
+      100% 1px no-repeat;
 }
 
 .name {
@@ -709,6 +730,13 @@ body,
   text-align: center;
   text-wrap: balance;
   color: var(--gold-bright);
+}
+
+/* Second header line: the base type under a rare/unique name, PoE2's two-line stack. */
+.name-base {
+  margin-top: 1px;
+  font-size: 15px;
+  opacity: 0.9;
 }
 
 /* PoE2 rarity colors on the item name (from the echoed rarity base-property). */
@@ -849,6 +877,12 @@ body,
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ink);
+}
+
+/* Stat lines in the game's magic-mod blue (lightened for 13-15px contrast on the
+   near-black panel) — base properties stay parchment, mirroring the real tooltip. */
+.stat .ftext {
+  color: #a8a8f8;
 }
 
 .stat .num {
@@ -1093,26 +1127,33 @@ body,
 }
 
 /* --- waystone danger panel (T7) --- */
+/* Severity as colored text on a dark plate (the game's map-mod idiom), not a filled
+   candy pill; the label text carries the meaning, color reinforces it. */
 .level {
   align-self: center;
-  padding: 2px 10px 3px;
+  padding: 2px 12px 3px;
+  border: 1px solid;
   border-radius: 3px;
+  background: rgba(0, 0, 0, 0.3);
   font: 400 12px/1.5 var(--smallcaps);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #0a0806;
 }
 .level.safe {
-  background: #8fe3a0;
+  color: #8fe3a0;
+  border-color: rgba(143, 227, 160, 0.5);
 }
 .level.caution {
-  background: #e8c98a;
+  color: #e8c98a;
+  border-color: rgba(232, 201, 138, 0.5);
 }
 .level.dangerous {
-  background: #ff9d5c;
+  color: #ff9d5c;
+  border-color: rgba(255, 157, 92, 0.5);
 }
 .level.deadly {
-  background: #ff6b6b;
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.55);
 }
 
 .flags {
