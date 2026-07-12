@@ -1,5 +1,7 @@
 plan: active/0001-mvp-price-check-overlay
-active: T9 in-game eyeball (rune price sheet on Ctrl+Alt+F). T1–T9 code-complete (MVP price-check + waystone danger-checker + regex cheat-sheet [dormant] + rune sheet). Remaining gate: in-game verification of T4–T9 (pricing/danger against real items; rune sheet visual pass), then archive this plan.
+active: in-game verification pass. T1–T11 code-complete (MVP price-check + waystone danger-checker + regex cheat-sheet [dormant] + category price sheet + PoE2 retheme/fixes). Remaining gate: in-game verification of T4–T11 (pricing/danger against real items; sheet + theme visual pass; T11's OnDemand-focus check — typed filters work, fullscreen Proton survives a panel click), then archive this plan.
+
+note (2026-07-12): T11 — PoE2 retheme (Fontin + bronze/gold tooltip look, rarity-colored names, DESIGN.md/PRODUCT.md added) + fixes: stale-panel race guards, ADR-0007 (KeyboardMode None → OnDemand so min/max + sheet filter accept keystrokes; supersedes ADR-0003), same-item re-check re-prices instead of "No item", truncated-Rare name fallback, rate-limit countdown.
 
 note (2026-06-28): T8 regex cheat-sheet **disabled for now** — the Ctrl+Alt+F entry point is removed (lib.rs `--regex` branch + installer shortcut), backend (`cheatsheet.rs`/`clipboard.rs`) + Vue panel retained dormant for an easy restore (ADR-0006 stands). Overlay card UI reworked for readability (near-opaque panel, larger/higher-contrast text, labeled filter section).
 

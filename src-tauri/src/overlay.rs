@@ -44,11 +44,12 @@ const OVERLAY_H: i32 = 640;
 /// surface is ~1×1 — invisible, trapping nothing — never full-screen. Per-region
 /// click-through *within* the panel (so the game stays live behind it) is the T5 seam.
 ///
-/// **Keyboard mode `None`:** the surface never takes keyboard focus — a game overlay
-/// must not steal the keyboard from PoE2 (you keep moving/casting while it is up).
-/// Dismissal stays available via the ✕ button (a pointer click, focus-independent)
-/// and the `Ctrl+Alt+X` hide shortcut (KWin, ADR-0003); in-webview Esc is inert with
-/// `None`. (`Exclusive` was also rejected — it drops the game out of fullscreen.)
+/// **Keyboard mode `OnDemand` (ADR-0007):** the surface takes keyboard focus only
+/// after a click on the panel — so the typed filters (stat min/max, sheet name
+/// filter) work — and the game keeps the keyboard at all other times. Dismissal
+/// stays focus-independent via the ✕ button (a pointer click) and the `Ctrl+Alt+X`
+/// hide shortcut (KWin); in-webview Esc also works while the panel holds focus.
+/// (`Exclusive` remains rejected — it drops the game out of fullscreen.)
 #[cfg(target_os = "linux")]
 pub fn init_layer_shell(window: &WebviewWindow) -> tauri::Result<()> {
     let gtk_window = window.gtk_window()?;
@@ -70,9 +71,9 @@ pub fn init_layer_shell(window: &WebviewWindow) -> tauri::Result<()> {
 
     // Draw over panels; reserve no screen space.
     gtk_window.set_exclusive_zone(-1);
-    // Never take keyboard focus — a game overlay must not steal the keyboard from PoE2;
-    // dismissal is the ✕ click + Ctrl+Alt+X. See the doc comment.
-    gtk_window.set_keyboard_mode(KeyboardMode::None);
+    // Focus only on click (ADR-0007) — the game keeps the keyboard until the user
+    // clicks a typed filter; dismissal stays the ✕ click + Ctrl+Alt+X regardless.
+    gtk_window.set_keyboard_mode(KeyboardMode::OnDemand);
 
     Ok(())
 }

@@ -2,7 +2,8 @@
 //!
 //! A curated, build-agnostic library of PoE2 stash/vendor search patterns, surfaced to
 //! the overlay (Tauri command `get_cheatsheet`) as a pointer-only click-to-copy list —
-//! the overlay never takes keyboard focus (ADR-0003), so there is no typed editor; the
+//! the overlay took no keyboard focus when this shipped (since relaxed to on-demand
+//! focus, ADR-0007), so there is no typed editor; the
 //! user clicks a pattern, the app writes it to the X11 clipboard ([`crate::clipboard`]),
 //! and pastes it into the game's Ctrl-F box.
 //!

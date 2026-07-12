@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR-0007
 ---
 
 # 0003 — Overlay dismissal safety: a sized, focus-free surface + a compositor-level hide shortcut

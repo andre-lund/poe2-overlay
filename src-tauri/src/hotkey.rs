@@ -106,7 +106,7 @@ pub fn price_check(app: &AppHandle) {
     }
     // The game's copy reaches the clipboard only after KWin's XWayland sync, which lags a
     // few hundred ms. Poll until the clipboard CHANGES to a fresh item (vs the snapshot),
-    // or give up (~1.5 s → "No item"). Waiting for the change is what kills the off-by-one
+    // or give up (~1.5 s → re-price an unchanged item-shaped clipboard, else "No item"). Waiting for the change is what kills the off-by-one
     // (reading too early returns the previous item). But the FIRST synth of a session often
     // does not land — ydotool's daemon is cold, or KWin's shortcut grab still holds the
     // physical keys as we synthesize — which is the "first press shows nothing" symptom. So
@@ -126,14 +126,27 @@ pub fn price_check(app: &AppHandle) {
             let _ = synth_copy(&synth.0);
         }
     }
-    let Some(text) = item else {
-        // The clipboard never changed to a fresh item — no item under the cursor (or it is
-        // the same item as last check). Show the "No item" card so a keypress always gives
-        // visible feedback rather than the overlay looking dead.
-        eprintln!("[hotkey] no fresh item on the clipboard after ~1.5 s — no item under the cursor?");
-        let _ = app.emit("price-check-result", trade::PriceResult::invalid());
-        show_overlay(app);
-        return;
+    let text = match item {
+        Some(t) => t,
+        // The clipboard never changed — but it already holds an item. That is the
+        // re-check-the-same-item case (the game copies identical text, so "changed"
+        // can never fire): price what's there instead of showing "No item". The
+        // trade-off: pressing the key over *nothing* while an old item text sits on
+        // the clipboard re-prices that old item — the card names the item prominently,
+        // so a stale re-price is self-explanatory where a false "No item" was a dead end.
+        None if before.contains("Item Class:") => {
+            eprintln!("[hotkey] clipboard unchanged but holds an item — re-pricing it (same-item re-check)");
+            before.clone()
+        }
+        None => {
+            // No fresh item and no item-shaped clipboard — nothing under the cursor.
+            // Show the "No item" card so a keypress always gives visible feedback
+            // rather than the overlay looking dead.
+            eprintln!("[hotkey] no item on the clipboard after ~1.5 s — no item under the cursor?");
+            let _ = app.emit("price-check-result", trade::PriceResult::invalid());
+            show_overlay(app);
+            return;
+        }
     };
     eprintln!("[hotkey] price check: {} chars copied", text.len());
 

@@ -115,6 +115,26 @@ else
     echo "  (or: sudo usermod -aG input \$USER, then re-login)"
 fi
 
+# 5. Fontin — the PoE UI typeface the overlay's theme prefers (free for personal and
+#    commercial USE, but not redistributable, so it can't ship in this repo; fetched
+#    best-effort from the author's site instead). The CSS falls back to system serifs
+#    when absent, so failure here is cosmetic only.
+FONT_DIR="$HOME/.local/share/fonts/fontin"
+if [[ -f "$FONT_DIR/Fontin-Regular.ttf" ]]; then
+    echo "✓ Fontin already installed → $FONT_DIR"
+elif command -v curl >/dev/null && command -v unzip >/dev/null; then
+    if curl -fsL --max-time 30 -o /tmp/fontin_pc.zip "https://www.exljbris.com/dl/fontin2_pc.zip" 2>/dev/null; then
+        mkdir -p "$FONT_DIR"
+        unzip -o -q /tmp/fontin_pc.zip -d "$FONT_DIR" && fc-cache -f "$FONT_DIR" >/dev/null
+        rm -f /tmp/fontin_pc.zip
+        echo "✓ Installed Fontin (exljbris, free) → $FONT_DIR"
+    else
+        echo "! Could not fetch Fontin (offline?) — overlay falls back to system serifs."
+    fi
+else
+    echo "! curl/unzip missing — skipping Fontin; overlay falls back to system serifs."
+fi
+
 echo
 echo "Almost done. Two things KDE needs:"
 echo "  1. Log out and back in (or restart the session) so kglobalacceld picks up the"

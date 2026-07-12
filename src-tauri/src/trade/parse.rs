@@ -129,10 +129,12 @@ pub fn parse_item(text: &str) -> Option<ParsedItem> {
             Some(&name_line) => {
                 let rare_or_unique = item.rarity == "Unique" || item.rarity == "Rare";
                 if rare_or_unique && lines.get(ridx + 2).is_none() {
-                    // Truncated Rare/Unique with no base-type line — the reference's
-                    // `except` branch sets both name and base to the first line.
-                    item.name = lines[0].to_string();
-                    item.base_type = lines[0].to_string();
+                    // Truncated Rare/Unique with no base-type line: fall back to the
+                    // name line for both. (The reference's `except` branch used
+                    // lines[0], but that is the "Item Class:" header — garbage as a
+                    // display name.)
+                    item.name = name_line.to_string();
+                    item.base_type = name_line.to_string();
                 } else {
                     item.name = name_line.to_string();
                     item.base_type = if rare_or_unique {
@@ -264,11 +266,11 @@ mod tests {
     }
 
     #[test]
-    fn truncated_rare_falls_back_to_first_line() {
-        // A Rare with no base-type line: mirror the reference's except branch
-        // (name == base == lines[0]).
+    fn truncated_rare_falls_back_to_name_line() {
+        // A Rare with no base-type line: name and base both fall back to the name
+        // line (NOT lines[0], the "Item Class:" header the reference used).
         let item = parse_item("Item Class: Rings\nRarity: Rare\nDoom Coil").expect("parses");
-        assert_eq!(item.name, "Item Class: Rings");
-        assert_eq!(item.base_type, "Item Class: Rings");
+        assert_eq!(item.name, "Doom Coil");
+        assert_eq!(item.base_type, "Doom Coil");
     }
 }

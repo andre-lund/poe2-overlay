@@ -97,11 +97,53 @@ const baseProps = ref<BaseProp[]>([]);
 const leagues = ref<string[]>([]);
 const selectedLeague = ref("");
 // Monotonic token: a fresh price-check bumps it so a slow in-flight requery for the
-// previous item can't overwrite the newly-checked one when it finally resolves.
+// previous item can't overwrite the newly-checked one when it finally resolves. The
+// panel-open listeners and the sheet category switch guard on it too — any async fetch
+// that resolves after a newer trigger must drop its result, not resurrect a stale panel.
 const reqGen = ref(0);
+// Rate-limit countdown, seconds remaining. Display + affordance gating only — the
+// backend lockout stays the source of truth (a premature search just returns another
+// rateLimited result, restarting the countdown from the server's number).
+const rateWait = ref(0);
+let rateTimer: number | undefined;
 const unlisten: UnlistenFn[] = [];
 
+function stopCountdown() {
+  if (rateTimer !== undefined) {
+    clearInterval(rateTimer);
+    rateTimer = undefined;
+  }
+  rateWait.value = 0;
+}
+
+function startCountdown(secs: number) {
+  stopCountdown();
+  rateWait.value = secs;
+  rateTimer = window.setInterval(() => {
+    if (rateWait.value <= 1) {
+      stopCountdown(); // hits 0 → the status flips to "cleared" and the button re-enables
+    } else {
+      rateWait.value--;
+    }
+  }, 1000);
+}
+
 const hasFilters = computed(() => stats.value.length > 0 || baseProps.value.length > 0);
+
+// Rarity class for the item-name header, PoE2 tooltip colors (rare yellow, unique
+// orange, …). Derived from the echoed base properties; bulk results carry none and
+// fall back to the default gold.
+const rarityClass = computed(() => {
+  const r = baseProps.value.find((b) => b.id === "rarity")?.value.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    normal: "r-normal",
+    magic: "r-magic",
+    rare: "r-rare",
+    unique: "r-unique",
+    currency: "r-currency",
+  };
+  return map[r] ?? "";
+});
 
 // Price spread over the fetched (cheapest-first) listings plus the search's total match
 // count, so a wall of identical floor prices reads as "the floor of a big pool" instead
@@ -147,8 +189,12 @@ async function switchCategory(category: string) {
   const sheet = priceSheet.value;
   if (sheetBusy.value || !sheet || category === sheet.category) return;
   sheetBusy.value = true;
+  const myGen = reqGen.value;
   try {
     const next = await invoke<PriceSheet>("get_price_sheet", { category });
+    // A price check / panel switch landed while this fetch ran — its listener already
+    // cleared the sheet; assigning now would resurrect it over the new panel.
+    if (myGen !== reqGen.value) return;
     sheetFilter.value = "";
     priceSheet.value = next;
   } catch (e) {
@@ -164,6 +210,14 @@ function applyResult(r: PriceResult) {
   priceSheet.value = null;
   result.value = r;
   itemName.value = r.item;
+  // Tick down the backend's "wait Ns" so the card isn't a stale static number.
+  if (r.status === "rateLimited") {
+    const secs = Number(r.message?.match(/(\d+)s/)?.[1] ?? 0);
+    if (secs > 0) startCountdown(secs);
+    else stopCountdown();
+  } else {
+    stopCountdown();
+  }
   // Echoed filters carry the toggle state forward, so editing persists across requeries.
   stats.value = r.parsedStats.map((s) => ({ ...s }));
   baseProps.value = r.baseProperties.map((b) => ({ ...b }));
@@ -242,6 +296,7 @@ onMounted(async () => {
   unlisten.push(
     await listen<string>("price-check-loading", (e) => {
       reqGen.value++; // invalidate any in-flight requery for the previous item
+      stopCountdown(); // a fresh check owns the card; the result restarts it if limited
       itemName.value = e.payload;
       result.value = null;
       danger.value = null;
@@ -273,12 +328,16 @@ onMounted(async () => {
   unlisten.push(
     await listen("show-regex", async () => {
       reqGen.value++; // opening the cheat-sheet abandons any in-flight requery
+      const myGen = reqGen.value;
       busy.value = false;
       // Fetch first, then swap panels atomically — clearing the price/danger state
       // before this await would fall the template through to the stale price card for
       // the IPC round-trip; holding the prior panel until the sheet is ready avoids any
       // flash. The price-check/danger listeners clear `cheatsheet` when they fire.
       const sheet = await invoke<Cheatsheet>("get_cheatsheet");
+      // A price check / other panel superseded this open while the fetch ran — showing
+      // the sheet now would bury the newer panel under a stale one.
+      if (myGen !== reqGen.value) return;
       loading.value = false;
       result.value = null;
       danger.value = null;
@@ -293,12 +352,14 @@ onMounted(async () => {
   unlisten.push(
     await listen("show-runes", async () => {
       reqGen.value++; // opening the price sheet abandons any in-flight requery
+      const myGen = reqGen.value;
       busy.value = false;
       // Same anti-flash pattern as show-regex: fetch first (one poe.ninja round-trip),
       // then swap panels atomically so the prior card holds until the sheet is ready.
       // Reopening always lands on the default category (Runes) — the backend maps ""
       // to it — so the hotkey's behavior is predictable regardless of the last tab.
       const sheet = await invoke<PriceSheet>("get_price_sheet", { category: "" });
+      if (myGen !== reqGen.value) return; // superseded while fetching — drop, don't resurrect
       loading.value = false;
       result.value = null;
       danger.value = null;
@@ -315,6 +376,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener("keydown", onKey);
+  stopCountdown();
   unlisten.forEach((u) => u());
 });
 </script>
@@ -322,7 +384,7 @@ onUnmounted(() => {
 <template>
   <div class="overlay-root">
     <div class="card">
-      <button class="close" title="Hide (Esc / Ctrl+Alt+X)" @click="hide">✕</button>
+      <button class="close" title="Hide (Ctrl+Alt+X)" @click="hide">✕</button>
 
       <template v-if="cheatsheet">
         <header class="head">
@@ -351,7 +413,7 @@ onUnmounted(() => {
 
       <template v-else-if="priceSheet">
         <header class="head">
-          <div class="name">{{ priceSheet.category }} prices</div>
+          <div class="name">{{ priceSheet.category }}</div>
           <div class="sheet-league">
             {{ priceSheet.league }} · poe.ninja ·
             <button class="sheet-toggle" @click="catsOpen = !catsOpen">
@@ -404,7 +466,10 @@ onUnmounted(() => {
       </template>
 
       <div v-else-if="!itemName" class="hint">
-        Hover an item in PoE2 and press Ctrl+Alt+D…
+        <div class="hint-title">PoE2 Overlay</div>
+        <div class="hint-row"><kbd>Ctrl+Alt+D</kbd><span>price-check the hovered item</span></div>
+        <div class="hint-row"><kbd>Ctrl+Alt+F</kbd><span>open the price sheet</span></div>
+        <div class="hint-row"><kbd>Ctrl+Alt+X</kbd><span>hide the overlay</span></div>
       </div>
 
       <template v-else-if="danger">
@@ -427,11 +492,11 @@ onUnmounted(() => {
 
       <template v-else>
         <header class="head">
-          <div class="name">{{ itemName || "Unrecognized item" }}</div>
+          <div class="name" :class="rarityClass">{{ itemName || "Unrecognized item" }}</div>
           <label v-if="leagues.length" class="league-field">
             <span class="field-label">League</span>
             <div class="select-wrap">
-              <select v-model="selectedLeague" class="league" :disabled="busy" @change="requery">
+              <select v-model="selectedLeague" class="league" :disabled="busy || rateWait > 0" @change="requery">
                 <option v-for="lg in leagues" :key="lg" :value="lg">{{ lg }}</option>
               </select>
             </div>
@@ -457,12 +522,12 @@ onUnmounted(() => {
             <input v-model="st.max" class="num" placeholder="max" :disabled="busy || !st.active" />
           </div>
 
-          <button class="requery" :disabled="busy" @click="requery">
-            {{ busy ? "Searching…" : "Requery" }}
+          <button class="requery" :disabled="busy || rateWait > 0" @click="requery">
+            {{ busy ? "Searching…" : rateWait > 0 ? `Wait ${rateWait}s…` : "Search again" }}
           </button>
         </section>
 
-        <div v-if="loading" class="status">Searching market…</div>
+        <div v-if="loading" class="status searching">Searching market…</div>
 
         <template v-else-if="result">
           <div v-if="spread" class="spread" :class="{ stale: busy }">{{ spread }}</div>
@@ -473,7 +538,14 @@ onUnmounted(() => {
             </li>
           </ul>
           <div v-else class="status" :class="{ err: result.status === 'error' }">
-            {{ result.message || "No listings" }}
+            <template v-if="result.status === 'rateLimited'">
+              {{
+                rateWait > 0
+                  ? `Rate limit — try again in ${rateWait}s`
+                  : "Rate limit cleared — you can search again."
+              }}
+            </template>
+            <template v-else>{{ result.message || "No listings" }}</template>
           </div>
         </template>
       </template>
@@ -493,6 +565,11 @@ body,
 </style>
 
 <style scoped>
+/* PoE2 in-game look: the panel borrows the item-tooltip vocabulary the player already
+   parses hundreds of times per session — black glass, bronze/gold chrome, Fontin serif
+   (the game's own typeface; falls back to system serifs when not installed), rarity
+   colors on the item name. See PRODUCT.md / DESIGN.md. */
+
 /* The backdrop is click-through; only the card itself captures input. The layer-shell
    surface is a bounded centred rectangle (ADR-0003), so clicks outside it reach the
    game regardless. */
@@ -500,29 +577,61 @@ body,
   position: fixed;
   inset: 0;
   pointer-events: none;
+
+  /* Theme tokens (PoE2 tooltip palette; sRGB canon from the game UI, not composed). */
+  --bg: #0c0a07;
+  --bg-raised: #171207;
+  --edge: #574a2c;
+  --edge-dim: #3d331e;
+  --edge-hi: #8a7444;
+  --ink: #d6cbb2;
+  --ink-dim: #9a8d70;
+  --gold: #c8aa6d;
+  --gold-bright: #e8d5a0;
+  --serif: Fontin, "Palatino Linotype", Palatino, Georgia, serif;
+  --smallcaps: "Fontin SmallCaps", Fontin, Palatino, Georgia, serif;
 }
 
 /* Constant-size card filling the surface with internal scroll. A constant painted
-   region avoids the WebKitGTK transparent-repaint ghost stacking from T3 (ADR-0003). */
+   region avoids the WebKitGTK transparent-repaint ghost stacking from T3 (ADR-0003).
+   Solid near-black: an 8%-transparent panel let the bright game scene bleed through
+   and wash out the text (T3 lesson) — readability over glass. */
 .card {
   position: absolute;
   inset: 6px;
   display: flex;
   flex-direction: column;
-  gap: 11px;
-  padding: 15px 17px;
+  gap: 10px;
+  padding: 14px 16px;
   overflow-y: auto;
-  border-radius: 11px;
-  /* Near-opaque: an 8%-transparent panel let the bright game scene bleed through and
-     wash out the text. A solid dark backdrop is the single biggest readability win. */
-  background: #0d1019;
-  border: 1px solid rgba(130, 190, 255, 0.7);
+  border-radius: 3px;
+  background: linear-gradient(180deg, #141008 0%, var(--bg) 90px);
+  border: 1px solid var(--edge);
+  /* Bronze double-edge: a black outer line + a faint gilt inner bevel, the tooltip
+     frame idiom — plus the drop shadow lifting the panel off the game scene. */
   box-shadow:
-    0 8px 30px rgba(0, 0, 0, 0.65),
-    inset 0 1px 0 rgba(150, 200, 255, 0.08);
-  color: #e8eefb;
-  font: 600 14.5px/1.45 Inter, system-ui, sans-serif;
+    0 0 0 1px #000,
+    inset 0 0 0 1px rgba(232, 213, 160, 0.09),
+    0 10px 32px rgba(0, 0, 0, 0.8);
+  color: var(--ink);
+  font: 400 15px/1.45 var(--serif);
   pointer-events: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--edge-dim) transparent;
+}
+
+.card::-webkit-scrollbar {
+  width: 8px;
+}
+.card::-webkit-scrollbar-thumb {
+  background: var(--edge-dim);
+  border-radius: 4px;
+}
+.card::-webkit-scrollbar-thumb:hover {
+  background: var(--edge);
+}
+.card::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .close {
@@ -532,37 +641,91 @@ body,
   width: 26px;
   height: 26px;
   padding: 0;
-  border: 1px solid rgba(130, 190, 255, 0.28);
-  border-radius: 7px;
-  background: rgba(130, 190, 255, 0.16);
-  color: #e8eefb;
-  font-size: 15px;
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  background: var(--bg-raised);
+  color: var(--gold);
+  font-size: 14px;
   line-height: 24px;
   cursor: pointer;
 }
 
 .close:hover {
-  background: rgba(130, 190, 255, 0.36);
+  border-color: var(--edge-hi);
+  color: var(--gold-bright);
 }
 
+/* Empty state: teach the three hotkeys instead of a bare one-liner. */
 .hint {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding-right: 30px;
-  color: #c4d2e6;
-  font-weight: 400;
+}
+
+.hint-title {
+  font: 400 17px/1.3 var(--smallcaps);
+  letter-spacing: 0.04em;
+  color: var(--gold);
+}
+
+.hint-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--ink-dim);
+  font-size: 13.5px;
+}
+
+.hint-row kbd {
+  flex: none;
+  padding: 1px 7px 2px;
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  background: var(--bg-raised);
+  color: var(--ink);
+  font: 400 12px/1.5 var(--serif);
+  white-space: nowrap;
 }
 
 .head {
   display: flex;
   flex-direction: column;
-  gap: 9px;
-  padding-right: 30px;
+  gap: 8px;
+  padding: 0 26px;
+}
+
+/* Tooltip-style header: centered name with a gilt separator fading at the edges. */
+.head::after {
+  content: "";
+  height: 1px;
+  margin-top: 1px;
+  background: linear-gradient(90deg, transparent, rgba(200, 170, 109, 0.55), transparent);
 }
 
 .name {
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  color: #f3d9a0;
+  font: 400 19px/1.25 var(--smallcaps);
+  letter-spacing: 0.02em;
+  text-align: center;
+  text-wrap: balance;
+  color: var(--gold-bright);
+}
+
+/* PoE2 rarity colors on the item name (from the echoed rarity base-property). */
+.name.r-normal {
+  color: #c8c8c8;
+}
+.name.r-magic {
+  color: #8888ff;
+}
+.name.r-rare {
+  color: #ffff77;
+}
+.name.r-unique {
+  color: #af6025;
+}
+.name.r-currency {
+  color: #aa9e82;
 }
 
 /* Labeled league control — a bare <select> read as plain text; the caption makes it
@@ -571,16 +734,15 @@ body,
   display: flex;
   flex-direction: column;
   gap: 3px;
-  align-self: flex-start;
+  align-self: center;
   max-width: 100%;
 }
 
 .field-label {
-  font-size: 11px;
-  font-weight: 700;
+  font: 400 11px/1.4 var(--smallcaps);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #8aa0bf;
+  color: var(--ink-dim);
 }
 
 /* WebKitGTK renders a native <select>'s value text in the GTK theme colour (dark,
@@ -597,11 +759,11 @@ body,
   position: absolute;
   top: 50%;
   right: 13px;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   margin-top: -6px;
-  border-right: 2px solid #9fc4ff;
-  border-bottom: 2px solid #9fc4ff;
+  border-right: 2px solid var(--gold);
+  border-bottom: 2px solid var(--gold);
   transform: rotate(45deg);
   pointer-events: none;
 }
@@ -610,30 +772,30 @@ body,
   appearance: none;
   -webkit-appearance: none;
   max-width: 100%;
-  padding: 7px 34px 7px 11px;
-  border-radius: 7px;
-  border: 1px solid rgba(130, 190, 255, 0.6);
-  background: #1a2133;
-  color: #f2f6ff;
-  font: 700 14px/1.4 Inter, system-ui, sans-serif;
+  padding: 6px 32px 7px 11px;
+  border-radius: 3px;
+  border: 1px solid var(--edge);
+  background: var(--bg-raised);
+  color: var(--ink);
+  font: 400 14px/1.4 var(--serif);
 }
 
 .league:disabled {
-  opacity: 0.75;
+  opacity: 0.7;
 }
 
 .league option {
-  background: #1a2133;
-  color: #f2f6ff;
+  background: var(--bg-raised);
+  color: var(--ink);
 }
 
 .filters {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 11px 0;
-  border-top: 1px solid rgba(130, 190, 255, 0.18);
-  border-bottom: 1px solid rgba(130, 190, 255, 0.18);
+  padding: 10px 0;
+  border-top: 1px solid rgba(200, 170, 109, 0.14);
+  border-bottom: 1px solid rgba(200, 170, 109, 0.14);
 }
 
 /* Heading so the checkboxes' purpose is self-evident. */
@@ -645,31 +807,28 @@ body,
 }
 
 .filters-title {
-  font-size: 12px;
-  font-weight: 700;
+  font: 400 12.5px/1.4 var(--smallcaps);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #9fc4ff;
+  color: var(--gold);
 }
 
 .filters-hint {
-  font-size: 12px;
-  font-weight: 400;
-  color: #97a6bd;
+  font-size: 12.5px;
+  color: var(--ink-dim);
 }
 
 .row {
   display: flex;
   align-items: center;
   gap: 9px;
-  font-weight: 500;
 }
 
 .row input[type="checkbox"] {
   flex: none;
-  width: 17px;
-  height: 17px;
-  accent-color: #6aa8ff;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--edge-hi);
 }
 
 /* Field name on a base-property row ("Class", "Base type", …) so a ticked box is
@@ -677,11 +836,10 @@ body,
 .fkind {
   flex: none;
   width: 78px;
-  font-size: 11px;
-  font-weight: 700;
+  font: 400 11px/1.4 var(--smallcaps);
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: #8aa0bf;
+  color: var(--ink-dim);
 }
 
 .ftext {
@@ -690,39 +848,56 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #e6edf8;
+  color: var(--ink);
 }
 
 .stat .num {
   flex: none;
   width: 54px;
   padding: 3px 5px;
-  border-radius: 6px;
-  border: 1px solid rgba(130, 190, 255, 0.4);
-  background: #161b29;
-  color: #e8eefb;
-  font: 600 13px/1.4 Inter, system-ui, sans-serif;
+  border-radius: 3px;
+  border: 1px solid var(--edge-dim);
+  background: var(--bg-raised);
+  color: var(--ink);
+  font: 400 13px/1.4 var(--serif);
   text-align: center;
+}
+
+.stat .num:focus {
+  outline: none;
+  border-color: var(--edge-hi);
+}
+
+.stat .num::placeholder {
+  color: var(--ink-dim);
 }
 
 .stat .num:disabled {
   opacity: 0.4;
 }
 
+/* Bronze action button — the PoE panel-button idiom, not a flat accent fill. */
 .requery {
   align-self: flex-start;
   margin-top: 6px;
-  padding: 7px 18px;
-  border: none;
-  border-radius: 7px;
-  background: #3f7fe0;
-  color: #ffffff;
-  font: 700 14px/1.4 Inter, system-ui, sans-serif;
+  padding: 6px 18px 7px;
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  background: linear-gradient(180deg, #3a2f1a, #241c0f);
+  box-shadow: inset 0 1px 0 rgba(232, 213, 160, 0.14);
+  color: var(--gold-bright);
+  font: 400 14px/1.4 var(--smallcaps);
+  letter-spacing: 0.04em;
   cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
 }
 
 .requery:hover:not(:disabled) {
-  background: #4f8df0;
+  border-color: var(--edge-hi);
+  color: #f4e7c3;
+  box-shadow:
+    inset 0 1px 0 rgba(232, 213, 160, 0.14),
+    0 0 8px rgba(200, 170, 109, 0.25);
 }
 
 .requery:disabled {
@@ -731,38 +906,57 @@ body,
 }
 
 .status {
-  color: #c4d2e6;
-  font-weight: 500;
+  color: var(--ink-dim);
 }
 
 .status.err {
-  color: #ff9d9d;
+  color: #ff8f7d;
+}
+
+/* Loading pulse: motion conveys the in-flight state, nothing else. */
+.status.searching {
+  animation: pulse 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status.searching {
+    animation: none;
+  }
 }
 
 /* --- category price sheet (T9) --- */
 .sheet-league {
+  text-align: center;
   font-size: 12px;
-  font-weight: 600;
-  color: #8aa0bf;
+  color: var(--ink-dim);
 }
 
 .sheet-toggle {
   padding: 0;
   border: none;
   background: none;
-  color: #9fc4ff;
-  font: 600 12px/1.4 Inter, system-ui, sans-serif;
+  color: var(--gold);
+  font: 400 12px/1.4 var(--serif);
   cursor: pointer;
 }
 
 .sheet-toggle:hover {
-  color: #cfe3ff;
+  color: var(--gold-bright);
 }
 
 .sheet-groups {
   display: flex;
   gap: 3px;
-  border-bottom: 1px solid rgba(130, 190, 255, 0.18);
+  border-bottom: 1px solid rgba(200, 170, 109, 0.14);
 }
 
 .sheet-group {
@@ -770,20 +964,20 @@ body,
   border: none;
   border-bottom: 2px solid transparent;
   background: none;
-  color: #8aa0bf;
-  font: 700 12px/1.4 Inter, system-ui, sans-serif;
+  color: var(--ink-dim);
+  font: 400 13px/1.4 var(--smallcaps);
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
   cursor: pointer;
 }
 
 .sheet-group:hover:not(:disabled) {
-  color: #cfe3ff;
+  color: var(--ink);
 }
 
 .sheet-group.active {
-  color: #f3d9a0;
-  border-bottom-color: #f3d9a0;
+  color: var(--gold-bright);
+  border-bottom-color: var(--gold);
 }
 
 .sheet-group:disabled {
@@ -798,23 +992,24 @@ body,
 }
 
 .sheet-cat {
-  padding: 4px 10px;
-  border: 1px solid rgba(130, 190, 255, 0.28);
-  border-radius: 999px;
-  background: rgba(130, 190, 255, 0.08);
-  color: #cfe3ff;
-  font: 600 12px/1.4 Inter, system-ui, sans-serif;
+  padding: 3px 10px 4px;
+  border: 1px solid var(--edge-dim);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 12.5px/1.4 var(--serif);
   cursor: pointer;
 }
 
 .sheet-cat:hover:not(:disabled) {
-  background: rgba(130, 190, 255, 0.2);
+  border-color: var(--edge);
+  color: var(--gold-bright);
 }
 
 .sheet-cat.active {
-  background: #3f7fe0;
-  border-color: #3f7fe0;
-  color: #ffffff;
+  background: linear-gradient(180deg, #3a2f1a, #241c0f);
+  border-color: var(--edge-hi);
+  color: var(--gold-bright);
 }
 
 .sheet-cat:disabled {
@@ -823,17 +1018,21 @@ body,
 }
 
 .sheet-filter {
-  padding: 7px 11px;
-  border-radius: 7px;
-  border: 1px solid rgba(130, 190, 255, 0.6);
-  background: #161b29;
-  color: #e8eefb;
-  font: 600 14px/1.4 Inter, system-ui, sans-serif;
+  padding: 6px 11px 7px;
+  border-radius: 3px;
+  border: 1px solid var(--edge-dim);
+  background: var(--bg-raised);
+  color: var(--ink);
+  font: 400 14px/1.4 var(--serif);
+}
+
+.sheet-filter:focus {
+  outline: none;
+  border-color: var(--edge-hi);
 }
 
 .sheet-filter::placeholder {
-  color: #7e8aa0;
-  font-weight: 400;
+  color: var(--ink-dim);
 }
 
 .sheet-name {
@@ -842,13 +1041,12 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #e6edf8;
+  color: var(--ink);
 }
 
 .spread {
-  font-size: 12px;
-  font-weight: 600;
-  color: #9fc4ff;
+  font-size: 12.5px;
+  color: var(--gold);
 }
 
 .spread.stale {
@@ -871,17 +1069,23 @@ body,
   justify-content: space-between;
   align-items: baseline;
   padding: 5px 0;
-  border-bottom: 1px solid rgba(130, 190, 255, 0.14);
+  border-bottom: 1px solid rgba(200, 170, 109, 0.12);
 }
 
 .price {
-  font: 700 14px/1.4 "JetBrains Mono", ui-monospace, monospace;
-  color: #eef4ff;
+  font: 700 14px/1.4 var(--serif);
+  color: var(--gold-bright);
+}
+
+/* The verdict the user came for: the cheapest listing reads first, slightly louder. */
+.listing:first-child .price {
+  font-size: 16px;
+  color: #f4e7c3;
 }
 
 .age {
   font-size: 12px;
-  color: #92a0b6;
+  color: var(--ink-dim);
 }
 
 .status.safe {
@@ -890,14 +1094,13 @@ body,
 
 /* --- waystone danger panel (T7) --- */
 .level {
-  align-self: flex-start;
-  padding: 2px 9px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
+  align-self: center;
+  padding: 2px 10px 3px;
+  border-radius: 3px;
+  font: 400 12px/1.5 var(--smallcaps);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #0a0c14;
+  color: #0a0806;
 }
 .level.safe {
   background: #8fe3a0;
@@ -925,14 +1128,14 @@ body,
   display: flex;
   gap: 8px;
   padding: 6px 0;
-  border-bottom: 1px solid rgba(120, 180, 255, 0.12);
+  border-bottom: 1px solid rgba(200, 170, 109, 0.12);
 }
 
 .flag .dot {
   flex: none;
   width: 8px;
   height: 8px;
-  margin-top: 5px;
+  margin-top: 6px;
   border-radius: 50%;
 }
 .flag.caution .dot {
@@ -950,20 +1153,20 @@ body,
 }
 
 .flabel {
-  font-weight: 600;
-  color: #eaf2ff;
+  font-weight: 700;
+  color: var(--ink);
 }
 
 .fwhy {
-  font-weight: 400;
-  font-size: 12px;
-  color: #aebfd6;
+  font-size: 12.5px;
+  color: var(--ink-dim);
 }
 
 .fmod {
   margin-top: 2px;
-  font: 400 11px/1.4 "JetBrains Mono", ui-monospace, monospace;
-  color: #7e8aa0;
+  font-style: italic;
+  font-size: 12px;
+  color: #8888ff;
 }
 
 /* --- regex cheat-sheet (T8) --- */
@@ -973,11 +1176,10 @@ body,
 
 .rcat-name {
   margin: 6px 0 3px;
-  font-size: 11px;
-  font-weight: 700;
+  font: 400 11.5px/1.4 var(--smallcaps);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #7e8aa0;
+  color: var(--ink-dim);
 }
 
 .rrow {
@@ -988,9 +1190,9 @@ body,
   gap: 6px 10px;
   width: 100%;
   padding: 5px 8px;
-  border: none;
-  border-radius: 6px;
-  background: rgba(120, 180, 255, 0.06);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: rgba(200, 170, 109, 0.05);
   color: inherit;
   font: inherit;
   text-align: left;
@@ -999,12 +1201,12 @@ body,
 }
 
 .rrow:hover {
-  background: rgba(120, 180, 255, 0.16);
+  border-color: var(--edge-dim);
+  background: rgba(200, 170, 109, 0.1);
 }
 
 .rlabel {
-  font-weight: 600;
-  color: #cfe3ff;
+  color: var(--ink);
 }
 
 .rregex {
@@ -1014,22 +1216,20 @@ body,
   text-overflow: ellipsis;
   white-space: nowrap;
   font: 400 12px/1.4 "JetBrains Mono", ui-monospace, monospace;
-  color: #e8c98a;
+  color: var(--gold);
 }
 
 .rnote {
   flex-basis: 100%;
-  font-size: 11px;
-  font-weight: 400;
-  color: #7e8aa0;
+  font-size: 11.5px;
+  color: var(--ink-dim);
 }
 
 .rcopied {
   position: absolute;
   top: 5px;
   right: 8px;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 11.5px;
   color: #8fe3a0;
   opacity: 0;
   transition: opacity 0.1s;
@@ -1041,8 +1241,7 @@ body,
 
 .rfooter {
   margin-top: 6px;
-  font-size: 11px;
-  font-weight: 400;
-  color: #7e8aa0;
+  font-size: 11.5px;
+  color: var(--ink-dim);
 }
 </style>

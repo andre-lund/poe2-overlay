@@ -52,6 +52,11 @@ Override the keys: `POE2_PRICECHECK_KEY="Meta+D" POE2_HIDE_KEY="Meta+X" POE2_RUN
 ./packaging/install.sh` (KDE shortcut syntax), or change them later in System Settings →
 Keyboard → Shortcuts.
 
+The installer also fetches **Fontin** (exljbris, PoE's UI typeface) into
+`~/.local/share/fonts/fontin/` — free for personal and commercial *use* but not
+redistributable, so it is downloaded from the author's site rather than shipped in this
+repo. Purely cosmetic: the overlay theme falls back to system serifs when it's absent.
+
 > The regex cheat-sheet (T8) is **disabled for now**; its old `Ctrl+Alt+F` key now opens the
 > rune price sheet (T9) — poe.ninja rune prices for the active league, for reward panels the
 > game offers no clipboard copy on. The regex backend + Vue panel are retained, dormant, for
