@@ -1,2 +1,2 @@
-plan: active/0002-windows-port (draft — not started)
-active: nothing in flight. 0002 is drafted with three [NEEDS CLARIFICATION] gates (Windows test hardware, hotkey chords, distribution) that must be resolved before T1 starts. Other candidates: regex cheat-sheet restore (dormant per ADR-0006), danger-ruleset tuning (plain data in danger.rs). 0001 archived 2026-07-12, all tasks user-confirmed in-game.
+plan: active/0002-windows-port
+active: gates resolved (Windows test PC exists; Ctrl+D-style chords, Ctrl+F rejected as game-bound; GitHub Releases via Actions). Next: T1 seam split (cfg-split overlay/hotkey/clipboard, Windows stubs, msvc cargo check) — doable on Linux. Other candidates: regex cheat-sheet restore (ADR-0006), danger-ruleset tuning. 0001 archived 2026-07-12, all tasks user-confirmed in-game.

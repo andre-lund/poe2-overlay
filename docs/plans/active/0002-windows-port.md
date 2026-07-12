@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 created: 2026-07-12
 updated: 2026-07-12
 adrs: [1, 2, 4, 7]
@@ -48,16 +48,15 @@ byte-identical, and lean on the fact that Windows makes each seam *simpler*:
 If the Windows window/input mechanism decisions harden into anything
 non-obvious during T1, promote them to ADR-0008 rather than growing this plan.
 
-Open questions (gate: resolve before the implementing task starts):
+Gates resolved 2026-07-12 (user):
 
-- [NEEDS CLARIFICATION: test hardware — is there a Windows machine/VM with PoE2
-  installed to iterate on? T2/T3/T5 are blocked on real hardware; WebView2 + hotkey
-  behavior can't be verified from Linux.]
-- [NEEDS CLARIFICATION: keep Ctrl+Alt+D / Ctrl+Alt+F / Ctrl+Alt+X as the Windows
-  chords, or rebind (e.g. Ctrl+D like Awakened PoE Trade uses)? Configurability
-  scope?]
-- [NEEDS CLARIFICATION: distribution — GitHub Releases from an Actions windows
-  runner, or local builds only?]
+- **Test hardware:** a separate Windows PC is available for T2/T3/T5 iteration.
+- **Chords:** Awakened-style short chords — **Ctrl+D** price check. Proposed
+  companions, to finalize in T3 in-game: **Ctrl+Shift+F** price sheet and
+  **Ctrl+Shift+X** panic hide — deliberately NOT bare Ctrl+F, which is the game's
+  own stash/vendor search-focus key and must not be grabbed globally. All three
+  rebindable.
+- **Distribution:** GitHub Releases built by an Actions windows runner (T4).
 
 ## Tasks
 
@@ -87,3 +86,9 @@ Open questions (gate: resolve before the implementing task starts):
 - 2026-07-12 — Plan drafted post-0001-archive. Windows chosen as a port target for
   reach, not necessity (the Windows gap is already served; the differentiators are
   the danger checker + price sheet). Linux remains the primary target.
+- 2026-07-12 — All three clarification gates resolved by the user: separate Windows
+  test PC exists; Windows chords go Awakened-style (Ctrl+D price check; sheet/hide
+  companions proposed as Ctrl+Shift+F / Ctrl+Shift+X pending in-game T3 check —
+  bare Ctrl+F rejected because the game binds it to stash/vendor search focus);
+  distribution via GitHub Releases from an Actions windows runner. Plan is
+  unblocked; T1 (seam split) can start.
