@@ -4,7 +4,7 @@ status: accepted
 
 # 0007 — On-demand keyboard focus so typed filters work, keeping the dismissal-safety posture
 
-**Implemented by:** [docs/plans/active/0001-mvp-price-check-overlay.md](../plans/active/0001-mvp-price-check-overlay.md) (T11), commits eb8c8c6 (T11) · c2b0ff1 (T11)
+**Implemented by:** [docs/plans/archive/0001-mvp-price-check-overlay.md](../plans/archive/0001-mvp-price-check-overlay.md) (T11), commits eb8c8c6 (T11) · c2b0ff1 (T11)
 **Supersedes:** ADR-0003
 **Relates to:** ADR-0002 (the `--hide` forwarding path it keeps relying on)
 

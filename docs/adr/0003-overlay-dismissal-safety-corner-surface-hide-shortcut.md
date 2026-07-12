@@ -4,7 +4,7 @@ status: superseded by ADR-0007
 
 # 0003 — Overlay dismissal safety: a sized, focus-free surface + a compositor-level hide shortcut
 
-**Implemented by:** [docs/plans/active/0001-mvp-price-check-overlay.md](../plans/active/0001-mvp-price-check-overlay.md) (T3), commits _pending_
+**Implemented by:** [docs/plans/archive/0001-mvp-price-check-overlay.md](../plans/archive/0001-mvp-price-check-overlay.md) (T3), commits 9a3ee30 (T3)
 **Relates to:** ADR-0002 (reuses its single-instance shortcut-forwarding mechanism for `--hide`)
 
 The overlay surface must **never** be the sole owner of its own dismissal, and it

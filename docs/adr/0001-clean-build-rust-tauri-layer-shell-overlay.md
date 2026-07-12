@@ -4,7 +4,7 @@ status: accepted
 
 # 0001 — Build a Wayland-native PoE2 trade overlay as a clean Rust/Tauri layer-shell app (ExileWatch as reference, not a fork)
 
-**Implemented by:** [docs/plans/active/0001-mvp-price-check-overlay.md](../plans/active/0001-mvp-price-check-overlay.md)
+**Implemented by:** [docs/plans/archive/0001-mvp-price-check-overlay.md](../plans/archive/0001-mvp-price-check-overlay.md), commits 53331f7 (T1) · b9b7869 (T2)
 **Partly superseded by:** [ADR-0002](0002-kde-global-shortcut-hotkey.md) — the `evdev` global-hotkey decision is replaced by a KDE global shortcut; the rest of this ADR stands.
 
 We build our own Path of Exile 2 trade overlay for KDE Plasma / KWin Wayland as a

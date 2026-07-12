@@ -6,11 +6,11 @@ the hovered item, and prices it against the GGG trade2 API + poe.ninja — the s
 job the Windows-only Overwolf "PoE Overlay II" does, but built for native KWin
 Wayland where the X11-based overlays (Exiled-Exchange-2, awakened-poe-trade) fail.
 
-> Status: **feature-complete, in-game verification pending** (T1–T11). Everything
-> below is code-complete and reviewed; T1–T3 are user-confirmed in-game, T4–T11 await
-> the final in-game pass before the plan archives. Tracked in `docs/plans/active/`.
-> T11 restyled the overlay to PoE2's own tooltip look (Fontin, bronze/gold, rarity
-> colors) and moved to on-demand keyboard focus so the typed filters work (ADR-0007).
+> Status: **working — all features user-verified in-game** (T1–T11, plan archived at
+> `docs/plans/archive/0001-mvp-price-check-overlay.md`). The overlay wears PoE2's own
+> tooltip look (Fontin, bronze/gold, rarity colors — see `DESIGN.md` and
+> `docs/theme-preview.png`) with on-demand keyboard focus for the typed filters
+> (ADR-0007).
 
 ## What it does
 

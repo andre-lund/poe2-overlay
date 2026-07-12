@@ -4,7 +4,7 @@ status: accepted
 
 # 0002 — Capture the price-check hotkey via a KDE global shortcut (single-instance forwarding), not evdev
 
-**Implemented by:** [docs/plans/active/0001-mvp-price-check-overlay.md](../plans/active/0001-mvp-price-check-overlay.md) (T3)
+**Implemented by:** [docs/plans/archive/0001-mvp-price-check-overlay.md](../plans/archive/0001-mvp-price-check-overlay.md) (T3), commits 9a3ee30 (T3)
 **Supersedes:** ADR-0001 (the input-capture mechanism only — its clean-build, Rust/Tauri stack, layer-shell overlay, and pricing decisions still stand)
 
 The price-check trigger is a **KDE global shortcut** (default `Ctrl+Alt+D`) that runs

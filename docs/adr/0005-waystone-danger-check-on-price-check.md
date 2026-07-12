@@ -4,7 +4,7 @@ status: accepted
 
 # 0005 — A price-check on a Waystone yields a danger verdict, not a price (separate event, static keyword ruleset)
 
-**Implemented by:** [docs/plans/active/0001-mvp-price-check-overlay.md](../plans/active/0001-mvp-price-check-overlay.md) (T7)
+**Implemented by:** [docs/plans/archive/0001-mvp-price-check-overlay.md](../plans/archive/0001-mvp-price-check-overlay.md) (T7), commits 0b1fcf1 (T7)
 **Builds on:** [ADR-0002](0002-kde-global-shortcut-hotkey.md) (the hotkey/clipboard/parse path) and [ADR-0004](0004-pricing-core-warm-client-event-contract.md) (the overlay event contract this extends)
 
 The price-check hotkey is overloaded: when the copied item is a **Waystone** (item class

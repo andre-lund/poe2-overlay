@@ -4,7 +4,7 @@ status: accepted
 
 # 0006 — Regex helpers ship as a pointer-only cheat-sheet that writes the X11 clipboard
 
-**Implemented by:** [docs/plans/active/0001-mvp-price-check-overlay.md](../plans/active/0001-mvp-price-check-overlay.md) (T8)
+**Implemented by:** [docs/plans/archive/0001-mvp-price-check-overlay.md](../plans/archive/0001-mvp-price-check-overlay.md) (T8), commits e93f0dd (T8)
 **Builds on:** [ADR-0002](0002-kde-global-shortcut-hotkey.md) (KDE-shortcut trigger), [ADR-0003](0003-overlay-dismissal-safety-corner-surface-hide-shortcut.md) (the never-take-keyboard-focus surface), and [ADR-0004](0004-pricing-core-warm-client-event-contract.md) (the overlay event-contract pattern)
 
 The regex-helpers feature is a **curated, pointer-only cheat-sheet**: a static library of PoE2

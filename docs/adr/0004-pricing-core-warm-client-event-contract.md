@@ -4,7 +4,7 @@ status: accepted
 
 # 0004 — Pricing core: warm async client, IP-rate-limit lockout, and a two-phase overlay event contract
 
-**Implemented by:** [docs/plans/active/0001-mvp-price-check-overlay.md](../plans/active/0001-mvp-price-check-overlay.md) (T4)
+**Implemented by:** [docs/plans/archive/0001-mvp-price-check-overlay.md](../plans/archive/0001-mvp-price-check-overlay.md) (T4), commits cd60a03 (T4)
 **Builds on:** [ADR-0001](0001-clean-build-rust-tauri-layer-shell-overlay.md) (pricing data sources + persistent-app rationale) and [ADR-0002](0002-kde-global-shortcut-hotkey.md) (the hotkey path that drives a check)
 
 The pricing core lives in the persistent app as a single warm `reqwest` async client plus
