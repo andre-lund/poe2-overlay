@@ -1,2 +1,2 @@
-plan: none — 0001 archived 2026-07-12 (all tasks T1–T11 user-confirmed in-game; see archive/0001-mvp-price-check-overlay.md)
-active: nothing in flight. Next candidates when picked up: Windows port feasibility (portable pricing core + Vue UI; platform seams overlay.rs / hotkey.rs / clipboard.rs need win32 counterparts), regex cheat-sheet restore (dormant per ADR-0006), danger-ruleset tuning (plain data in danger.rs).
+plan: active/0002-windows-port (draft — not started)
+active: nothing in flight. 0002 is drafted with three [NEEDS CLARIFICATION] gates (Windows test hardware, hotkey chords, distribution) that must be resolved before T1 starts. Other candidates: regex cheat-sheet restore (dormant per ADR-0006), danger-ruleset tuning (plain data in danger.rs). 0001 archived 2026-07-12, all tasks user-confirmed in-game.
