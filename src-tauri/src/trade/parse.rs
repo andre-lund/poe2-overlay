@@ -52,11 +52,12 @@ const STAT_PREFIX_EXCEPTIONS: &[&str] = &["Grants Skill:", "Bonded:", "Adds"];
 /// empty. Accepts both basic (Ctrl+C) and advanced (Ctrl+Alt+C, with `{ … Modifier
 /// … (Tier: N) }` annotations) copies; tier/source default to explicit when absent.
 pub fn parse_item(text: &str) -> Option<ParsedItem> {
-    let lines: Vec<&str> = text
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .collect();
+    let lines = strip_cannot_use(
+        text.lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect(),
+    );
     if lines.is_empty() {
         return None;
     }
@@ -161,6 +162,30 @@ pub fn parse_item(text: &str) -> Option<ParsedItem> {
     Some(item)
 }
 
+/// Shown right under `Rarity:` (plus its own `--------`) when the character can't
+/// meet the requirements. Left in, it lands where the name/base lines are expected
+/// and the search is built for a base called "--------".
+pub(crate) const CANNOT_USE: &str = "You cannot use this item. Its stats will be ignored";
+
+/// Drop the [`CANNOT_USE`] notice and the separator that follows it.
+fn strip_cannot_use(lines: Vec<&str>) -> Vec<&str> {
+    let mut out = Vec::with_capacity(lines.len());
+    let mut skip_sep = false;
+    for l in lines {
+        if l.starts_with(CANNOT_USE) {
+            skip_sep = true;
+            continue;
+        }
+        if skip_sep && l.starts_with("--------") {
+            skip_sep = false;
+            continue;
+        }
+        skip_sep = false;
+        out.push(l);
+    }
+    out
+}
+
 /// Walk the lines a second time collecting modifier lines, tracking the current
 /// affix source/tier from any `{ … Modifier … }` annotation block.
 fn collect_stats(lines: &[&str], item: &mut ParsedItem) {
@@ -211,6 +236,17 @@ fn collect_stats(lines: &[&str], item: &mut ParsedItem) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cannot_use_notice_is_not_the_name() {
+        let item = parse_item(
+            "Item Class: Staves\nRarity: Rare\nYou cannot use this item. Its stats will be ignored\n--------\n\
+             Skull Spur\nChiming Staff\n--------\nItem Level: 79",
+        )
+        .expect("parses");
+        assert_eq!(item.name, "Skull Spur");
+        assert_eq!(item.base_type, "Chiming Staff");
+    }
 
     #[test]
     fn parses_currency_as_bulk() {
