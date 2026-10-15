@@ -14,6 +14,7 @@
 //! Tauri state and drives [`Pricing::price`].
 
 mod gear;
+mod i18n;
 mod ninja;
 mod parse;
 mod stats;
@@ -25,6 +26,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::async_runtime::Mutex as AsyncMutex;
 
+pub use i18n::{detect as detect_lang, Lang};
 pub use ninja::SheetEntry;
 pub use parse::parse_item;
 
@@ -178,6 +180,9 @@ impl PriceResult {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PriceSheet {
+    /// UI language code the entry names are in (the panel localizes its own labels
+    /// to match).
+    pub lang: String,
     pub league: String,
     pub category: String,
     pub groups: Vec<SheetGroupInfo>,
@@ -425,6 +430,11 @@ fn fresh<T>(slot: &Option<(Instant, T)>, ttl: Duration) -> bool {
 
 // --- Pricing state ---------------------------------------------------------
 
+/// Poison-recovering lock (ADR-0004 never-panics: a stray panic must not brick pricing).
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Warm-client pricing state, stored in Tauri state via `app.manage(Pricing::new())`
 /// and shared by every price check (ADR-0004).
 pub struct Pricing {
@@ -437,6 +447,22 @@ pub struct Pricing {
     /// The last item priced, so the T5 requery can re-price it with edited filters /
     /// a new league without the frontend round-tripping the whole item.
     last_item: Mutex<Option<ParsedItem>>,
+    /// Localized→English tables per client language ([`i18n`]); fetched on first use,
+    /// refreshed daily like the rest of the trade2 data.
+    dicts: AsyncMutex<HashMap<Lang, (Instant, Arc<i18n::LangDict>)>>,
+    /// English base type → item class (RePoE), for item classes the localized category
+    /// labels can't resolve. Fetched only when such a copy shows up.
+    base_classes: AsyncMutex<Option<(Instant, Arc<HashMap<String, String>>)>>,
+    /// English line → original for the last localized copy; relabels the card (stat
+    /// rows, class/base/name) when the UI speaks the copy's language. Empty after an
+    /// English copy.
+    labels: Mutex<HashMap<String, String>>,
+    /// Language of the last item copy.
+    copy_lang: Mutex<Lang>,
+    /// UI language from the settings; `None` = auto (follow the game client).
+    ui_setting: Mutex<Option<Lang>>,
+    /// Auto-mode language: the last item copy's, seeded by `POE2_OVERLAY_LANG`.
+    seen_lang: Mutex<Option<Lang>>,
 }
 
 impl Pricing {
@@ -453,7 +479,143 @@ impl Pricing {
             rate: Mutex::new(RateLimit::default()),
             league: Mutex::new(None),
             last_item: Mutex::new(None),
+            dicts: AsyncMutex::new(HashMap::new()),
+            base_classes: AsyncMutex::new(None),
+            labels: Mutex::new(HashMap::new()),
+            copy_lang: Mutex::new(Lang::En),
+            ui_setting: Mutex::new(None),
+            seen_lang: Mutex::new(
+                std::env::var("POE2_OVERLAY_LANG").ok().and_then(|l| Lang::from_code(&l)),
+            ),
         }
+    }
+
+    /// Translate a localized item copy to the English clipboard format the parser and
+    /// pricers expect; an English copy (or any other text) is returned unchanged. If
+    /// the reference data can't be fetched the text passes through (and the parser
+    /// rejects it as before).
+    pub async fn localize(&self, text: &str) -> String {
+        *lock(&self.labels) = HashMap::new();
+        let lang = i18n::detect(text);
+        *lock(&self.copy_lang) = lang.unwrap_or(Lang::En);
+        if lang.is_some() || text.contains("Item Class:") {
+            *lock(&self.seen_lang) = Some(lang.unwrap_or(Lang::En));
+        }
+        let Some(lang) = lang else {
+            return text.to_string();
+        };
+        let Some(dict) = self.lang_dict(lang).await else {
+            return text.to_string();
+        };
+        let known = self.base_classes.lock().await.as_ref().map(|(_, m)| m.clone());
+        let (mut en, mut labels, class_known) = dict.translate_labeled(text, known.as_deref());
+        if !class_known && known.is_none() {
+            // Class label unknown to the category table — retry with RePoE's base → class.
+            if let Some(classes) = self.load_base_classes().await {
+                (en, labels, _) = dict.translate_labeled(text, Some(&*classes));
+            }
+        }
+        *lock(&self.labels) = labels;
+        en
+    }
+
+    /// The UI language: the settings choice, else (auto) the last copy's language.
+    pub fn ui_lang(&self) -> Lang {
+        lock(&self.ui_setting)
+            .or(*lock(&self.seen_lang))
+            .unwrap_or(Lang::En)
+    }
+
+    /// The settings choice (`None` = auto).
+    pub fn ui_setting(&self) -> Option<Lang> {
+        *lock(&self.ui_setting)
+    }
+
+    pub fn set_ui_setting(&self, lang: Option<Lang>) {
+        *lock(&self.ui_setting) = lang;
+    }
+
+    /// Whether the card may show the copy's own wording: only when the UI speaks the
+    /// copy's language (otherwise the English texts stay).
+    fn copy_in_ui_lang(&self) -> bool {
+        let copy = *lock(&self.copy_lang);
+        copy != Lang::En && copy == self.ui_lang()
+    }
+
+    /// The localized↔English tables for `lang`, fetched on first use, refreshed daily.
+    async fn lang_dict(&self, lang: Lang) -> Option<Arc<i18n::LangDict>> {
+        let mut dicts = self.dicts.lock().await;
+        if !dicts.get(&lang).is_some_and(|(at, _)| at.elapsed() < TRADE_DATA_TTL) {
+            match fetch_lang_dict(&self.client, lang).await {
+                Some(d) => {
+                    dicts.insert(lang, (Instant::now(), Arc::new(d)));
+                }
+                None => eprintln!("[i18n] could not fetch trade2 reference data for {}", lang.code()),
+            }
+        }
+        dicts.get(&lang).map(|(_, d)| d.clone())
+    }
+
+    async fn load_base_classes(&self) -> Option<Arc<HashMap<String, String>>> {
+        let mut slot = self.base_classes.lock().await;
+        if !fresh(&slot, TRADE_DATA_TTL) {
+            if let Some(m) = fetch_base_classes(&self.client).await {
+                *slot = Some((Instant::now(), Arc::new(m)));
+            }
+        }
+        slot.as_ref().map(|(_, m)| m.clone())
+    }
+
+    /// Original wording of a translated line (a waystone mod) when the UI speaks the
+    /// copy's language, else the English line.
+    pub fn relabel_line(&self, en: &str) -> String {
+        if !self.copy_in_ui_lang() {
+            return en.to_string();
+        }
+        lock(&self.labels).get(en).cloned().unwrap_or_else(|| en.to_string())
+    }
+
+    /// Display name for the loading card, in the player's language when localized.
+    pub fn display_name(&self, item: &ParsedItem) -> String {
+        self.relabel_name(&display_name(item))
+    }
+
+    pub fn relabel_name(&self, name: &str) -> String {
+        if !self.copy_in_ui_lang() {
+            return name.to_string();
+        }
+        let labels = lock(&self.labels);
+        let mut out = name.to_string();
+        // Longest first so a base inside a unique name is not replaced piecemeal.
+        let mut pairs: Vec<(&String, &String)> = labels.iter().collect();
+        pairs.sort_by_key(|(en, _)| std::cmp::Reverse(en.len()));
+        for (en, local) in pairs {
+            if out.contains(en.as_str()) {
+                out = out.replace(en.as_str(), local);
+            }
+        }
+        out
+    }
+
+    /// Localize a fresh result for the UI: the copy's own wording on the card when the
+    /// UI speaks its language. Only display `text` fields change — ids/values that
+    /// build the query stay English.
+    async fn finish(&self, mut res: PriceResult) -> PriceResult {
+        if self.copy_in_ui_lang() {
+            let labels = lock(&self.labels).clone();
+            for s in &mut res.parsed_stats {
+                if let Some(local) = labels.get(&s.text) {
+                    s.text = local.clone();
+                }
+            }
+            for b in &mut res.base_properties {
+                if let Some(local) = labels.get(&b.text) {
+                    b.text = local.clone();
+                }
+            }
+            res.item = self.relabel_name(&res.item);
+        }
+        res
     }
 
     /// Override the active league (T5 league selector). `None` reverts to auto
@@ -473,6 +635,11 @@ impl Pricing {
     /// IP-rate-limit lockout. Never panics — failures become an `Empty`/`Error`/
     /// `RateLimited` result the overlay renders as text.
     pub async fn price(&self, item: &ParsedItem) -> PriceResult {
+        let res = self.price_inner(item).await;
+        self.finish(res).await
+    }
+
+    async fn price_inner(&self, item: &ParsedItem) -> PriceResult {
         // Remember the item so T5's requery can re-price it with edited filters.
         *self.last_item.lock().unwrap_or_else(|e| e.into_inner()) = Some(item.clone());
 
@@ -527,7 +694,20 @@ impl Pricing {
             }
         }
         .unwrap_or_default();
+        let mut entries = entries;
+        let ui = self.ui_lang();
+        // Thai trade data keeps English item names — nothing to translate.
+        if ui != Lang::En && ui != Lang::Th {
+            if let Some(d) = self.lang_dict(ui).await {
+                for e in &mut entries {
+                    if let Some(local) = d.local_name(&e.name) {
+                        e.name = local;
+                    }
+                }
+            }
+        }
         PriceSheet {
+            lang: ui.code().to_string(),
             league: snapshot.league,
             category: label.to_string(),
             groups: ninja::SHEET_GROUPS
@@ -546,6 +726,16 @@ impl Pricing {
     /// uses it too), then re-runs: bulk via poe.ninja for the new league, gear via the
     /// trade2 query built from the *edited* stats/base. Honors the IP lockout.
     pub async fn requery(
+        &self,
+        league: String,
+        parsed_stats: Vec<ParsedStat>,
+        base_properties: Vec<BaseProp>,
+    ) -> PriceResult {
+        let res = self.requery_inner(league, parsed_stats, base_properties).await;
+        self.finish(res).await
+    }
+
+    async fn requery_inner(
         &self,
         league: String,
         parsed_stats: Vec<ParsedStat>,
@@ -726,6 +916,52 @@ async fn fetch_stats(client: &reqwest::Client) -> Option<Vec<StatEntry>> {
             .flat_map(|c| c.entries)
             .collect(),
     )
+}
+
+async fn fetch_json(client: &reqwest::Client, url: &str) -> Option<serde_json::Value> {
+    let resp = client.get(url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.json().await.ok()
+}
+
+/// Fetch the `www.` + `lang`'s trade2 reference data and build the translation tables.
+async fn fetch_lang_dict(client: &reqwest::Client, lang: Lang) -> Option<i18n::LangDict> {
+    let url = |host: &str, what: &str| {
+        format!("https://{host}.pathofexile.com/api/trade2/data/{what}")
+    };
+    let host = lang.host();
+    // Sequential on purpose: once a day per language, and it keeps the burst on GGG's
+    // data API small.
+    let stats_en = fetch_json(client, &url("www", "stats")).await;
+    let stats_l = fetch_json(client, &url(host, "stats")).await;
+    let items_en = fetch_json(client, &url("www", "items")).await;
+    let items_l = fetch_json(client, &url(host, "items")).await;
+    let static_en = fetch_json(client, &url("www", "static")).await;
+    let static_l = fetch_json(client, &url(host, "static")).await;
+    let filters_l = fetch_json(client, &url(host, "filters")).await;
+    Some(i18n::LangDict::build(
+        lang, &stats_en?, &stats_l?, &items_en?, &items_l?, &static_en?, &static_l?, &filters_l?,
+    ))
+}
+
+/// RePoE (repoe-fork, PoE2 game-data export): English base type → in-game item class
+/// (`"Gold Ring"` → `"Rings"`), released items only.
+async fn fetch_base_classes(client: &reqwest::Client) -> Option<HashMap<String, String>> {
+    let classes = fetch_json(client, "https://repoe-fork.github.io/poe2/item_classes.min.json").await?;
+    let bases = fetch_json(client, "https://repoe-fork.github.io/poe2/base_items.min.json").await?;
+    let map: HashMap<String, String> = bases
+        .as_object()?
+        .values()
+        .filter(|b| b["release_state"].as_str() == Some("released"))
+        .filter_map(|b| {
+            let name = b["name"].as_str()?;
+            let class = classes[b["item_class"].as_str()?]["name"].as_str()?;
+            Some((name.to_string(), class.to_string()))
+        })
+        .collect();
+    (!map.is_empty()).then_some(map)
 }
 
 async fn fetch_items(client: &reqwest::Client) -> Option<Vec<String>> {

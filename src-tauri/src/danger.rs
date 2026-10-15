@@ -16,7 +16,8 @@ use std::collections::HashSet;
 
 use serde::Serialize;
 
-use crate::trade::{display_name, ParsedItem};
+use crate::danger_i18n;
+use crate::trade::{display_name, Lang, ParsedItem};
 
 /// How dangerous a waystone is overall (and per matched mod). `Ord` runs Safe < Caution
 /// < Dangerous < Deadly so the report level is `max` of its flags.
@@ -45,6 +46,9 @@ pub struct DangerFlag {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DangerReport {
+    /// UI language code the texts are in (see [`localize`]) — the panel localizes its
+    /// own labels to match.
+    pub lang: String,
     pub item: String,
     pub level: DangerLevel,
     pub flags: Vec<DangerFlag>,
@@ -124,6 +128,19 @@ const RULES: &[Rule] = &[
         why: "Larger monster hit areas — harder to dodge" },
 ];
 
+/// Translate a report's labels/explanations to the UI language. The matched mod lines
+/// and item name are relabelled by the caller, which holds the copy's English→original
+/// line map.
+pub fn localize(report: &mut DangerReport, lang: Lang) {
+    report.lang = lang.code().to_string();
+    for f in &mut report.flags {
+        if let Some((label, why)) = danger_i18n::text(lang, &f.label) {
+            f.label = label.to_string();
+            f.why = why.to_string();
+        }
+    }
+}
+
 /// True if the item is a Waystone (the only class the danger-checker handles; tablets and
 /// other map devices are out of scope for T7).
 pub fn is_waystone(item: &ParsedItem) -> bool {
@@ -189,6 +206,7 @@ pub fn analyze(item: &ParsedItem) -> DangerReport {
         .unwrap_or(DangerLevel::Safe);
 
     DangerReport {
+        lang: "en".to_string(),
         item: display_name(item),
         level,
         flags,
@@ -205,6 +223,16 @@ mod tests {
             "Item Class: Waystones\nRarity: Rare\nDread Core\nWaystone (Tier 15)\n--------\nWaystone Tier: 15\nItem Quantity: +40% (augmented)\n--------\n{mods}"
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn every_rule_has_a_text_in_every_language() {
+        let combos = ["Combo: crit chance + crit damage", "Combo: no sustain + amplified damage"];
+        for lang in Lang::ALL.into_iter().filter(|l| *l != Lang::En) {
+            for label in RULES.iter().map(|r| r.label).chain(combos) {
+                assert!(danger_i18n::text(lang, label).is_some(), "no {} text for {label}", lang.code());
+            }
+        }
     }
 
     #[test]

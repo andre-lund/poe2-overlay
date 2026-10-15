@@ -10,8 +10,10 @@
 mod cheatsheet;
 mod clipboard;
 mod danger;
+mod danger_i18n;
 mod hotkey;
 mod overlay;
+mod settings;
 mod trade;
 
 use tauri::{Emitter, Manager, State, WebviewWindow};
@@ -60,6 +62,39 @@ fn copy_to_clipboard(clip: State<'_, clipboard::Clip>, text: String) -> Result<(
     clip.copy(&text)
 }
 
+/// Current settings for the settings panel.
+#[tauri::command]
+fn get_settings(pricing: State<'_, trade::Pricing>) -> settings::SettingsView {
+    settings_view(&pricing)
+}
+
+/// Set the UI language (`"auto"` or a code), persist it, and tell the panel which
+/// language is now in effect.
+#[tauri::command]
+fn set_language(
+    app: tauri::AppHandle,
+    pricing: State<'_, trade::Pricing>,
+    language: String,
+) -> settings::SettingsView {
+    let lang = trade::Lang::from_code(&language);
+    pricing.set_ui_setting(lang);
+    let saved = settings::Settings {
+        language: Some(lang.map_or("auto", |l| l.code()).to_string()),
+    };
+    if let Err(e) = settings::save(&app, &saved) {
+        eprintln!("[settings] save failed: {e}");
+    }
+    let _ = app.emit("ui-lang", pricing.ui_lang().code());
+    settings_view(&pricing)
+}
+
+fn settings_view(pricing: &trade::Pricing) -> settings::SettingsView {
+    settings::SettingsView {
+        language: pricing.ui_setting().map_or("auto", |l| l.code()).to_string(),
+        effective: pricing.ui_lang().code().to_string(),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -102,7 +137,9 @@ pub fn run() {
             requery,
             get_cheatsheet,
             get_price_sheet,
-            copy_to_clipboard
+            copy_to_clipboard,
+            get_settings,
+            set_language
         ])
         .setup(|app| {
             let window = app
@@ -120,7 +157,9 @@ pub fn run() {
                 Err(e) => eprintln!("[hotkey] input synth unavailable ({e}); item copy disabled"),
             }
             // Warm pricing client + caches kept in state across checks (T4, ADR-0004).
-            app.manage(trade::Pricing::new());
+            let pricing = trade::Pricing::new();
+            pricing.set_ui_setting(settings::load(app.handle()).lang());
+            app.manage(pricing);
             // Persistent X11 clipboard owner for the regex cheat-sheet write (T8, ADR-0006).
             match clipboard::Clip::build() {
                 Ok(clip) => {

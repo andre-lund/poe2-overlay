@@ -35,6 +35,14 @@ Three hotkeys, all forwarded to one warm background instance (KDE global shortcu
 A regex stash/vendor cheat-sheet (clipboard-write) is built but **dormant** — its
 `Ctrl+Alt+F` slot now serves the price sheet; see ADR-0006.
 
+## Languages
+
+The overlay works with localized game clients — Russian, German, French, Spanish,
+Portuguese, Japanese and Korean item copies are translated to English before pricing
+(Thai clients copy items in English). The UI language is set with the ⚙ button on the
+card: **Auto** follows the game client, or pick any of the nine trade2 languages. See
+ADR-0008.
+
 ## Why this exists / how it works
 
 See `docs/adr/` for the decisions (ADR-0001 the clean build + layer-shell mechanism,
